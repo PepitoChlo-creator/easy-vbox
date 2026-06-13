@@ -1,0 +1,1 @@
+{"name":"fullstack","description":"fullstack preset","ram_mb":4096,"cpus":2,"disk_mb":40960,"nvme":true,"accelerate_3d":true,"headless":false}
