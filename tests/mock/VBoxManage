@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Fake VBoxManage used by tests/run-tests.sh.
 #
-# It records every invocation in $MOCK_LOG and keeps a little bit of state in
-# $MOCK_STATE so the test suite can verify the exact command sequence that
-# scripts/create-vm.sh produces, without a real VirtualBox installation.
+# It records every invocation in $MOCK_LOG, keeps the settings it is given in
+# $MOCK_STATE and renders them back through `showvminfo --machinereadable`, the
+# same way the real VBoxManage does. That lets the test suite verify both the
+# command sequence and the resulting configuration.
 #
-# Useful environment variables:
+# Environment variables:
 #   MOCK_STATE=DIR          state directory (required)
 #   MOCK_LOG=FILE           where calls are recorded (default: $MOCK_STATE/calls.log)
 #   MOCK_VERSION=7.0.20r1   version reported by --version
@@ -13,12 +14,15 @@
 #   MOCK_BRIDGED=1          report bridged interfaces
 #   MOCK_OSTYPES_LIST="..." comma separated OS type IDs (default: a small real set)
 #   MOCK_FAIL_ON="TEXT"     exit 1 with an error when the command contains TEXT
+#   MOCK_IGNORE="TEXT"      accept but silently drop a setting (simulates a
+#                           VirtualBox version that ignores an option)
 set -uo pipefail
 
 STATE="${MOCK_STATE:?MOCK_STATE must be set}"
 LOG="${MOCK_LOG:-$STATE/calls.log}"
 FOLDER="$STATE/VirtualBox VMs"
-mkdir -p "$STATE" "$FOLDER" "$STATE/forwarding" "$STATE/started"
+mkdir -p "$STATE" "$FOLDER" "$STATE/forwarding" "$STATE/started" \
+         "$STATE/cfg" "$STATE/ctrl" "$STATE/attach" "$STATE/shares"
 
 line="$(printf '%s ' "$@")"
 line="${line% }"
@@ -30,6 +34,34 @@ if [[ -n "${MOCK_FAIL_ON:-}" && "$line" == *"$MOCK_FAIL_ON"* ]]; then
 fi
 
 vm_uuid() { printf '00000000-0000-0000-0000-%012d' "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"; }
+cfg_file()   { printf '%s/cfg/%s.cfg' "$STATE" "$1"; }
+ctrl_file()  { printf '%s/ctrl/%s.ctrl' "$STATE" "$1"; }
+attach_file(){ printf '%s/attach/%s.attach' "$STATE" "$1"; }
+
+record() {  # record <vm> <key> <value>
+  local f; f="$(cfg_file "$1")"
+  if [[ -n "${MOCK_IGNORE:-}" ]]; then
+    # Simulate a build that accepts a setting but does not apply it: the key is
+    # still reported, with the value VirtualBox falls back to (e.g. cpus=1).
+    local item ikey ival old_ifs="$IFS"
+    IFS=','
+    for item in $MOCK_IGNORE; do
+      IFS="$old_ifs"
+      ikey="${item%%=*}"
+      ival="${item#*=}"
+      if [[ "$2" == "$ikey" ]]; then
+        IFS="$old_ifs"
+        set -- "$1" "$2" "$ival"
+        break
+      fi
+      IFS=','
+    done
+    IFS="$old_ifs"
+  fi
+  grep -v "^$2=" "$f" >"$f.tmp" 2>/dev/null || true
+  { cat "$f.tmp" 2>/dev/null || true; printf '%s=%s\n' "$2" "$3"; } >"$f" 2>/dev/null
+  rm -f "$f.tmp"
+}
 
 register_vm() { [[ -f "$STATE/vms" ]] || : >"$STATE/vms"; printf '%s\n' "$1" >>"$STATE/vms"; }
 unregister_vm() {
@@ -37,6 +69,7 @@ unregister_vm() {
   grep -vx -- "$1" "$STATE/vms" >"$STATE/vms.tmp" 2>/dev/null || true
   mv "$STATE/vms.tmp" "$STATE/vms"
 }
+is_registered() { [[ -f "$STATE/vms" ]] && grep -qx -- "$1" "$STATE/vms"; }
 
 cmd="${1:-}"
 (( $# > 0 )) && shift
@@ -89,29 +122,59 @@ case "$cmd" in
     ;;
 
   createvm)
-    name=""; folder="$FOLDER"
+    name=""; folder="$FOLDER"; ostype=""
     while (( $# > 0 )); do
       case "$1" in
         --name) name="$2"; shift 2 ;;
         --basefolder) folder="$2"; shift 2 ;;
+        --ostype) ostype="$2"; shift 2 ;;
         *) shift ;;
       esac
     done
     [[ -n "$name" ]] || { printf 'VBoxManage: error: --name is required\n' >&2; exit 1; }
     mkdir -p "$folder/$name"
     register_vm "$name"
+    [[ -n "$ostype" ]] && record "$name" ostype "$ostype"
     printf "Virtual machine '%s' is created and registered.\n" "$name"
     ;;
 
   showvminfo)
     name="${1:-}"
-    if [[ ! -f "$STATE/vms" ]] || ! grep -qx -- "$name" "$STATE/vms"; then
+    if ! is_registered "$name"; then
       printf 'VBoxManage: error: Could not find a registered machine named %s\n' "$name" >&2
       exit 1
     fi
+    cfg="$(cfg_file "$name")"
     printf 'name="%s"\n' "$name"
     printf 'CfgFile="%s/%s/%s.vbox"\n' "$FOLDER" "$name" "$name"
-    printf 'memorysize="4096"\n'
+    printf 'VMState="poweroff"\n'
+    if [[ -f "$cfg" ]]; then
+      while IFS= read -r kv; do
+        [[ -n "$kv" ]] && printf '%s\n' "$kv"
+      done <"$cfg"
+    fi
+    # Storage controllers in the same shape real VirtualBox uses.
+    if [[ -f "$(ctrl_file "$name")" ]]; then
+      i=0
+      while IFS='|' read -r cname ctype cbus cports; do
+        [[ -n "$cname" ]] || continue
+        printf 'storagecontrollername%d="%s"\n' "$i" "$cname"
+        printf 'storagecontrollertype%d="%s"\n' "$i" "$ctype"
+        printf 'storagecontrollerbus%d="%s"\n' "$i" "$cbus"
+        printf 'storagecontrollerportcount%d="%s"\n' "$i" "$cports"
+        i=$(( i + 1 ))
+      done <"$(ctrl_file "$name")"
+    fi
+    # Attached media: "CONTROLLER-PORT-DEVICE"=medium
+    if [[ -f "$(attach_file "$name")" ]]; then
+      while IFS='|' read -r actl aport adev atype amedium; do
+        [[ -n "$actl" ]] || continue
+        printf '"%s-%s-%s"=%s\n' "$actl" "$aport" "$adev" "$amedium"
+        printf '"%s-ImageUUID-%s-%s"="0000"\n' "$actl" "$aport" "$adev"
+        printf '"%s-IsEjected-%s-%s"="off"\n' "$actl" "$aport" "$adev"
+        printf '"%s-HostDrive-%s-%s"="%s"\n' "$actl" "$aport" "$adev" "$atype"
+      done <"$(attach_file "$name")"
+    fi
     if [[ -f "$STATE/forwarding/$name" ]]; then
       i=0
       while IFS= read -r rule; do
@@ -120,22 +183,139 @@ case "$cmd" in
         i=$(( i + 1 ))
       done <"$STATE/forwarding/$name"
     fi
+    if [[ -f "$STATE/shares/$name.share" ]]; then
+      i=0
+      while IFS='|' read -r sname spath sopts; do
+        [[ -n "$sname" ]] || continue
+        printf 'SharedFolderNameHost(%d)="%s"\n' "$i" "$sname"
+        printf 'SharedFolderPathHost(%d)="%s"\n' "$i" "$spath"
+        printf 'SharedFolderReadOnlyHost(%d)="%s"\n' "$i" "${sopts:-off}"
+        i=$(( i + 1 ))
+      done <"$STATE/shares/$name.share"
+    fi
     ;;
 
-  modifyvm|storagectl|sharedfolder|setextradata|modifynvram|controlvm)
+  modifyvm)
+    # The first non-flag token is the VM name.
     name=""
     for a in "$@"; do
       case "$a" in --*) ;; *) name="$a"; break ;; esac
     done
-    if [[ "$cmd" == "modifyvm" && "$*" == *"--natpf"* ]]; then
-      vm=""
-      while (( $# > 0 )); do
-        case "$1" in
-          --natpf*) rule="$2"; vm="$name"; printf '%s\n' "$rule" >>"$STATE/forwarding/$vm"; shift 2 ;;
-          *) shift ;;
-        esac
-      done
+    [[ -n "$name" ]] || { printf 'VBoxManage: error: VM name missing\n' >&2; exit 1; }
+
+    while (( $# > 0 )); do
+      opt="$1"
+      case "$opt" in
+        --memory)            record "$name" memory "$2"; shift 2 ;;
+        --cpus)              record "$name" cpus "$2"; shift 2 ;;
+        --vram)              record "$name" vram "$2"; shift 2 ;;
+        --graphicscontroller) record "$name" graphicscontroller "$2"; shift 2 ;;
+        --firmware)          record "$name" firmware "$2"; shift 2 ;;
+        --tpm-type)          record "$name" tpm-type "$2"; shift 2 ;;
+        --secure-boot)       record "$name" secure-boot "$2"; shift 2 ;;
+        --accelerate-3d)     record "$name" accelerate3d "$2"; shift 2 ;;
+        --nested-hw-virt)    record "$name" nested-hw-virt "$2"; shift 2 ;;
+        --usb)
+          record "$name" usb "$2"
+          [[ "$2" == "off" ]] && record "$name" usb-xhci off
+          shift 2 ;;
+        --usbxhci)           record "$name" usb-xhci "$2"; shift 2 ;;
+        --usbehci)           record "$name" usb-ehci "$2"; shift 2 ;;
+        --nic1)              record "$name" nic1 "$2"; shift 2 ;;
+        --bridgeadapter1)    record "$name" bridgeadapter1 "$2"; shift 2 ;;
+        --hostonlyadapter1)  record "$name" hostonlyadapter1 "$2"; shift 2 ;;
+        --intnet1)           record "$name" intnet1 "$2"; shift 2 ;;
+        --boot1)             record "$name" boot1 "$2"; shift 2 ;;
+        --boot2)             record "$name" boot2 "$2"; shift 2 ;;
+        --description)       record "$name" description "$2"; shift 2 ;;
+        --natpf*)
+          record "$name" "$opt" "$2"
+          printf '%s\n' "$2" >>"$STATE/forwarding/$name"
+          shift 2 ;;
+        --clipboard-mode|--draganddrop|--ioapic|--nestedpaging)
+          shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    ;;
+
+  storagectl)
+    name=""; cname=""; ctype=""; cbus=""; cports=""
+    for a in "$@"; do
+      case "$a" in --*) ;; *) name="$a"; break ;; esac
+    done
+    while (( $# > 0 )); do
+      case "$1" in
+        --name) cname="$2"; shift 2 ;;
+        --add) cbus="$2"; shift 2 ;;
+        --controller) ctype="$2"; shift 2 ;;
+        --portcount) cports="$2"; shift 2 ;;
+        --bootable|--hostiocache) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -n "$cname" ]] || { printf 'VBoxManage: error: --name is required\n' >&2; exit 1; }
+    case "$cbus" in
+      ide|sata|scsi|floppy|sas|usb|pcie) ;;
+      *)
+        # Real VirtualBox: "--add nvme" is not a valid bus.
+        printf 'VBoxManage: error: Invalid value for --add: %s\n' "$cbus" >&2
+        exit 1
+        ;;
+    esac
+    if [[ "$ctype" == "NVMe" && "$cbus" != "pcie" ]]; then
+      printf 'VBoxManage: error: NVMe requires the pcie bus\n' >&2
+      exit 1
     fi
+    if [[ "$ctype" == "NVMe" && "$cports" != "1" ]]; then
+      printf 'VBoxManage: error: NVMe supports a single port\n' >&2
+      exit 1
+    fi
+    printf '%s|%s|%s|%s\n' "$cname" "$ctype" "$cbus" "${cports:-1}" >>"$(ctrl_file "$name")"
+    ;;
+
+  storageattach)
+    name=""; actl=""; aport=""; adev=""; atype=""; amedium=""
+    for a in "$@"; do
+      case "$a" in --*) ;; *) name="$a"; break ;; esac
+    done
+    while (( $# > 0 )); do
+      case "$1" in
+        --storagectl) actl="$2"; shift 2 ;;
+        --port) aport="$2"; shift 2 ;;
+        --device) adev="$2"; shift 2 ;;
+        --type) atype="$2"; shift 2 ;;
+        --medium) amedium="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ -n "$amedium" && ! -e "$amedium" && "$amedium" != none ]]; then
+      printf 'VBoxManage: error: Could not open the medium %s\n' "$amedium" >&2
+      exit 1
+    fi
+    if [[ "$atype" == "dvddrive" && "$actl" == "NVMe" ]]; then
+      printf 'VBoxManage: error: NVMe does not support optical drives\n' >&2
+      exit 1
+    fi
+    printf '%s|%s|%s|%s|%s\n' "$actl" "${aport:-0}" "${adev:-0}" "$atype" "$amedium" >>"$(attach_file "$name")"
+    ;;
+
+  sharedfolder)
+    sub="${1:-}"
+    name="${2:-}"
+    [[ "$sub" == "add" ]] || { printf 'VBoxManage: error: unsupported sharedfolder subcommand %s\n' "$sub" >&2; exit 127; }
+    shift 2
+    sname=""; spath=""; ro="off"
+    while (( $# > 0 )); do
+      case "$1" in
+        --name) sname="$2"; shift 2 ;;
+        --hostpath) spath="$2"; shift 2 ;;
+        --readonly) ro="on"; shift ;;
+        --automount) shift ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s|%s|%s\n' "$sname" "$spath" "$ro" >>"$STATE/shares/$name.share"
     ;;
 
   createmedium|createhd)
@@ -154,35 +334,30 @@ case "$cmd" in
     printf 'Medium created: %s (%s MB)\n' "$filename" "${size:-0}"
     ;;
 
-  storageattach)
-    medium=""
-    while (( $# > 0 )); do
-      case "$1" in
-        --medium) medium="$2"; shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    if [[ -n "$medium" && ! -e "$medium" ]]; then
-      printf 'VBoxManage: error: Could not open the medium %s\n' "$medium" >&2
-      exit 1
-    fi
+  modifynvram|setextradata|controlvm)
+    :
     ;;
 
   unregistervm)
     name="${1:-}"
-    if [[ -f "$STATE/vms" ]] && ! grep -qx -- "$name" "$STATE/vms"; then
+    if ! is_registered "$name"; then
       printf 'VBoxManage: error: Could not find a registered machine named %s\n' "$name" >&2
       exit 1
     fi
     if [[ "$*" == *"--delete"* ]]; then
       rm -rf "${FOLDER:?}/$name"
+      rm -f "$(cfg_file "$name")" "$(ctrl_file "$name")" "$(attach_file "$name")"
+      rm -f "$STATE/forwarding/$name" "$STATE/shares/$name.share"
     fi
     unregister_vm "$name"
-    rm -f "$STATE/forwarding/$name"
     ;;
 
   startvm)
     name="${1:-}"
+    if ! is_registered "$name"; then
+      printf 'VBoxManage: error: Could not find a registered machine named %s\n' "$name" >&2
+      exit 1
+    fi
     mkdir -p "$STATE/started"
     : >"$STATE/started/$name"
     printf 'Waiting for VM "%s" to power on...\nVM "%s" has been successfully started.\n' "$name" "$name"

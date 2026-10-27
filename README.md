@@ -2,7 +2,8 @@
 
 **Create great VirtualBox VMs in seconds, not 15 minutes of clicking.**
 
-![tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)
+[![test](https://github.com/PepitoChlo-creator/easy-vbox/actions/workflows/test.yml/badge.svg)](https://github.com/PepitoChlo-creator/easy-vbox/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/PepitoChlo-creator/easy-vbox?sort=semver)](https://github.com/PepitoChlo-creator/easy-vbox/releases)
 ![shellcheck](https://img.shields.io/badge/shellcheck-clean-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![bash](https://img.shields.io/badge/bash-3.2%2B-4EAA25)
@@ -35,6 +36,8 @@ EasyVbox wraps all of it with:
 - **Graceful degradation** — detects VirtualBox version and Extension Pack,
   skips what your build cannot do instead of failing halfway
 - **A dry-run plan you can read and paste**
+- **Post-creation verification** — reads the VM back from VirtualBox and tells
+  you if any setting was silently ignored
 
 ---
 
@@ -49,6 +52,16 @@ cd easy-vbox
 ./scripts/create-vm.sh --iso ubuntu.iso --preset dev --dry-run   # inspect the plan
 ./scripts/create-vm.sh --iso ubuntu.iso --preset dev             # build it
 ```
+
+No git? Download the release tarball and use it directly:
+
+```bash
+curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.0.0.tar.gz
+tar xzf easy-vbox-3.0.0.tar.gz && cd easy-vbox-3.0.0
+./scripts/create-vm.sh --list-presets
+```
+
+Every release includes a `.sha256` checksum.
 
 Interactive mode (no arguments) asks for the ISO and the preset:
 
@@ -144,6 +157,27 @@ host port is taken by another VM it picks the next free one. Also `bridged`
 **Shared folders in one flag.** `--shared-folder ~/src` or
 `--shared-folder code=~/src:ro`.
 
+**It checks its own work.** After creating a VM, EasyVbox reads the
+configuration back with `showvminfo` and compares it with what you asked for:
+memory, CPUs, firmware, TPM, Secure Boot, controllers, the attached disk and
+ISO, port forwards and shared folders. If a VirtualBox version accepts an
+option but does not apply it, you see it immediately instead of discovering it
+at boot:
+
+```text
+▶ Verifying the VM configuration
+   ✓ memoria (MiB): 8192
+   ⚠ CPUs: se esperaba '4' y se obtuvo '1'
+   ✓ controladora NVMe presente
+   ✓ ISO conectada: ubuntu-24.04.iso
+   ✓ SSH reenviado en el puerto 2222
+⚠ Verificación con avisos: 1 ajuste(s) no aplicados, 13 correctos
+```
+
+The check is advisory (a warning never undoes a created VM) and can be skipped
+with `--no-verify`. Fields a given VirtualBox version does not report are shown
+as `·` instead of being counted as failures.
+
 **Safe by construction.** `--dry-run` changes nothing (not even a folder),
 `--print-config` shows the resolved values, `--name` collisions are refused,
 and `--replace` demands confirmation before deleting anything.
@@ -180,7 +214,7 @@ limited; x86 ISO images will not boot.
 --forward http:8080:80  Extra port forward (repeatable)
 --shared-folder SPEC    [name=]PATH[:ro]
 --headless | --no-start | --gui
---dry-run | --print-config | --list-presets
+--dry-run | --print-config | --list-presets | --no-verify
 ```
 
 Full reference, examples and environment variables:
@@ -194,7 +228,7 @@ No VirtualBox needed — the suite drives a fake `VBoxManage` and checks the exa
 command sequence:
 
 ```bash
-./tests/run-tests.sh          # 44 tests
+./tests/run-tests.sh          # 50 tests
 ./tests/run-tests.sh -v       # show every VBoxManage call
 ./scripts/validate-presets.sh # schema + docs coverage of all presets
 make test                     # both of the above + shellcheck, if installed

@@ -115,7 +115,7 @@ USB_MODE="" GRAPHICS="" FIRMWARE=""
 HEADLESS="" SHARED_FOLDER="" SHARED_NAME="HostShare" SHARED_RO=false
 NETWORK_TYPE="" BRIDGE_ADAPTER="" HOSTONLY_ADAPTER="" INTNET_NAME=""
 SSH_PORT="" EXTRA_FORWARDS=""
-START_MODE="" DRY_RUN=false FORCE_RESOURCES=false ASSUME_YES=false
+START_MODE="" DRY_RUN=false VERIFY=true FORCE_RESOURCES=false ASSUME_YES=false
 REPLACE=false PRINT_CONFIG=false OSTYPE_OVERRIDE="" OSTYPE_WANTED="" ACTIVE_MACHINE_FOLDER=""
 
 VM_REGISTERED_BY_US=false
@@ -358,6 +358,7 @@ GENERAL
   -n, --dry-run             Print the VBoxManage plan, change nothing
   -y, --yes                 Assume yes for confirmation prompts
       --log-file PATH       Write the VBoxManage log to PATH
+      --no-verify           Skip the post-creation configuration check
 
 VM
       --iso PATH            Installer image ('none' to skip the DVD drive)
@@ -433,6 +434,8 @@ parse_args() {
       --gui)           HEADLESS=false; START_MODE="gui"; shift ;;
       --no-start)      START_MODE="none"; shift ;;
       --no-log)        LOG_FILE="/dev/null"; LOG_FILE_EXPLICIT=true; shift ;;
+      --no-verify)     VERIFY=false; shift ;;
+      --verify)        VERIFY=true; shift ;;
       --)              shift; break ;;
       --*=*)
         key="${arg%%=*}"; val="$(opt_value "$arg")"
@@ -1051,6 +1054,201 @@ create_vm() {
   printf '   %s\n' "${lines[@]}" >&2
 }
 
+# ---------------------------------------------------------------------------
+# Post-creation verification
+#
+# Reads the configuration back from VirtualBox and compares it with what was
+# requested. This catches options a given VirtualBox version silently ignores,
+# which is the difference between "the commands looked right" and "the VM is
+# actually configured this way". It never aborts a successful creation.
+# ---------------------------------------------------------------------------
+VMI=""                 # machinereadable dump of the VM
+VCHECK_OK=0 VCHECK_WARN=0 VCHECK_SKIP=0
+VCHECK_ISSUES=""
+
+# Value of a "key=value" line (quotes stripped); empty when absent.
+# VirtualBox quotes some keys ("NVMe-0-0"="...") and some values, so both the
+# key and the value are normalised before comparing.
+mi_field() {
+  awk -v k="$2" '
+    {
+      if (index($0, k "=") == 1)                 { v = substr($0, length(k) + 2) }
+      else if (index($0, "\"" k "\"=") == 1)    { v = substr($0, length(k) + 4) }
+      else next
+      gsub(/^"|"$/, "", v)
+      print v
+      exit
+    }' "$1" 2>/dev/null
+}
+mi_has() {
+  awk -v k="$2" '
+    index($0, k "=") == 1 || index($0, "\"" k "\"=") == 1 { found = 1 }
+    END { exit(found ? 0 : 1) }' "$1" 2>/dev/null
+}
+# First key among the arguments that this VirtualBox reports.
+mi_first_key() {
+  local f="$1"; shift
+  local k
+  for k in "$@"; do
+    if mi_has "$f" "$k"; then printf '%s' "$k"; return 0; fi
+  done
+  return 1
+}
+
+vok()   { printf '   %b✓%b %s\n' "$GREEN" "$NC" "$*" >&2; VCHECK_OK=$(( VCHECK_OK + 1 )); }
+vwarn() {
+  printf '   %b⚠%b %s\n' "$YELLOW" "$NC" "$*" >&2
+  VCHECK_WARN=$(( VCHECK_WARN + 1 ))
+  VCHECK_ISSUES+="     - $*"$'\n'
+}
+vskip() { printf '   · %s (no lo informa esta versión de VirtualBox)\n' "$1" >&2; VCHECK_SKIP=$(( VCHECK_SKIP + 1 )); }
+
+# vcheck <label> <expected> <key...>   (exact, case-sensitive)
+vcheck() {
+  local label="$1" want="$2"; shift 2
+  local key got
+  if ! key="$(mi_first_key "$VMI" "$@")"; then vskip "$label"; return 0; fi
+  got="$(mi_field "$VMI" "$key")"
+  if [[ "$got" == "$want" ]]; then vok "$label: $got"
+  else vwarn "$label: se esperaba '$want' y se obtuvo '${got:-vacío}'"
+  fi
+}
+# vcheck_ci <label> <expected> <key...>  (case-insensitive)
+vcheck_ci() {
+  local label="$1" want="$2"; shift 2
+  local key got
+  if ! key="$(mi_first_key "$VMI" "$@")"; then vskip "$label"; return 0; fi
+  got="$(mi_field "$VMI" "$key")"
+  if [[ "$(printf '%s' "$got" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')" ]]; then
+    vok "$label: $got"
+  else
+    vwarn "$label: se esperaba '$want' y se obtuvo '${got:-vacío}'"
+  fi
+}
+
+verify_vm() {
+  $DRY_RUN && return 0
+  $VERIFY || return 0
+  [[ -n "$VBOX_BIN" ]] || return 0
+
+  info "Verifying the VM configuration"
+  local dump
+  dump="$("$VBOX_BIN" showvminfo "$VM_NAME" --machinereadable 2>/dev/null)" || dump=""
+  if [[ -z "$dump" ]]; then
+    vwarn "no se pudo leer la configuración con showvminfo"
+    return 0
+  fi
+  VMI="$(mktemp 2>/dev/null || echo "$HOME/easyvbox-verify.$$")"
+  printf '%s\n' "$dump" >"$VMI" 2>/dev/null || {
+    warn "no se pudo guardar la configuración para verificarla"
+    VMI=""
+    return 0
+  }
+
+  # Hardware
+  vcheck "memoria (MiB)" "$RAM_MB" memory memorysize
+  vcheck "CPUs" "$CPUS" cpus
+  vcheck "VRAM (MiB)" "$VRAM_MB" vram
+  vcheck_ci "firmware" "$FIRMWARE" firmware
+  vcheck_ci "gráficos" "$GRAPHICS" graphicscontroller graphics-controller
+  vcheck_ci "3D" "$(is_true "$ENABLE_3D" && echo on || echo off)" accelerate3d accelerate-3d
+  vcheck_ci "virtualización anidada" "$(is_true "$NESTED_VIRT" && echo on || echo off)" nested-hw-virt nested_hw_virt
+  if [[ "$TPM_TYPE" != "none" ]]; then
+    vcheck_ci "TPM" "$TPM_TYPE" tpm-type tpmtype
+  fi
+  if [[ "$SECURE_BOOT" == "on" ]]; then
+    vcheck_ci "Secure Boot" on secure-boot secureboot
+  fi
+  case "$USB_MODE" in
+    off)  vcheck_ci "USB" off usb ;;
+    xhci) vcheck_ci "USB 3.0 (xHCI)" on usb-xhci usbxhci usb_xhci ;;
+    ehci) vcheck_ci "USB 2.0 (EHCI)" on usb-ehci usbehci usb_ehci ;;
+    ohci) vcheck_ci "USB" on usb ;;
+  esac
+
+  # Storage
+  local i=0 ctype found_nvme=false found_sata=false
+  while (( i < 8 )); do
+    if ! mi_has "$VMI" "storagecontrollername$i"; then break; fi
+    ctype="$(mi_field "$VMI" "storagecontrollertype$i")"
+    case "$ctype" in
+      NVMe) found_nvme=true ;;
+      IntelAhci) found_sata=true ;;
+    esac
+    i=$(( i + 1 ))
+  done
+  if is_true "$USE_NVME"; then
+    if $found_nvme; then vok "controladora NVMe presente"
+    else vwarn "no se encontró la controladora NVMe"; fi
+  fi
+  if $found_sata; then vok "controladora SATA presente"
+  else vwarn "no se encontró la controladora SATA"; fi
+
+  local disk_ctl="SATA"
+  is_true "$USE_NVME" && disk_ctl="NVMe"
+  if mi_has "$VMI" "$disk_ctl-0-0"; then
+    local medium
+    medium="$(mi_field "$VMI" "$disk_ctl-0-0")"
+    if [[ -n "$medium" && "$medium" != "none" ]]; then
+      vok "disco en $disk_ctl puerto 0: $(basename "$medium")"
+    else
+      vwarn "no hay disco conectado en $disk_ctl puerto 0"
+    fi
+  else
+    vskip "disco conectado"
+  fi
+
+  if [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
+    if mi_has "$VMI" "SATA-1-0"; then
+      local dvd
+      dvd="$(mi_field "$VMI" "SATA-1-0")"
+      if [[ "$dvd" == "$ISO_PATH" ]]; then
+        vok "ISO conectada: $(basename "$ISO_PATH")"
+      else
+        vwarn "la ISO conectada no es la esperada ('${dvd:-vacío}')"
+      fi
+    else
+      vskip "ISO conectada"
+    fi
+    vcheck_ci "orden de arranque" "dvd" boot1
+  else
+    vcheck_ci "orden de arranque" "disk" boot1
+  fi
+
+  # Networking and sharing
+  if [[ "$NETWORK_TYPE" == "nat" && -n "$SSH_PORT" && "$SSH_PORT" != "none" ]]; then
+    if grep -qF ",tcp,,${SSH_PORT},,22" "$VMI" 2>/dev/null; then
+      vok "SSH reenviado en el puerto $SSH_PORT"
+    elif mi_has "$VMI" "Forwarding(0)"; then
+      vwarn "no se encontró el reenvío SSH al puerto $SSH_PORT"
+    else
+      vskip "reenvío SSH"
+    fi
+  fi
+  if [[ -n "$SHARED_FOLDER" ]]; then
+    if grep -qE "^\"?SharedFolderNameHost\(0\)=\"?${SHARED_NAME}\"?$" "$VMI" 2>/dev/null; then
+      vok "carpeta compartida '$SHARED_NAME' registrada"
+    elif mi_has "$VMI" "SharedFolderNameHost(0)"; then
+      vwarn "la carpeta compartida no se registró con el nombre '$SHARED_NAME'"
+    else
+      vwarn "no se encontró la carpeta compartida"
+    fi
+  fi
+
+  log "VERIFY: ok=$VCHECK_OK warn=$VCHECK_WARN skip=$VCHECK_SKIP"
+  local skipped=""
+  (( VCHECK_SKIP > 0 )) && skipped=" · $VCHECK_SKIP sin datos"
+  if (( VCHECK_WARN == 0 )); then
+    success "Verificación correcta ($VCHECK_OK comprobaciones$skipped)"
+  else
+    warn "Verificación con avisos: $VCHECK_WARN ajuste(s) no aplicados, $VCHECK_OK correctos"
+    printf '%s' "$VCHECK_ISSUES" >&2
+    printf '   La VM existe y es usable; revisa estos ajustes en su configuración.\n' >&2
+    printf '   Detalle completo: %s  ·  Oculta esta comprobación con --no-verify\n' "${LOG_FILE}" >&2
+  fi
+  rm -f "$VMI" 2>/dev/null || true
+}
+
 start_vm() {
   [[ "$START_MODE" == "none" ]] && { info "VM not started (--no-start). Start it with: VBoxManage startvm '$VM_NAME'" ; return 0; }
 
@@ -1163,6 +1361,7 @@ main() {
   fi
 
   create_vm
+  verify_vm
   start_vm
   trap - EXIT
 
