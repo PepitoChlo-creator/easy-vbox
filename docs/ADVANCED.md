@@ -72,6 +72,24 @@ counterparts so a preset can always be overridden.
 | `--shared-folder SPEC` | `[name=]PATH[:ro]` shared into the guest |
 | `--shared-name NAME` | Share name when the spec has none (default `HostShare`) |
 
+### Installer image and automation
+
+| Flag | Description |
+|---|---|
+| `--download NAME\|URL` | Download the image (cached, checksum-verified) and use it |
+| `--list-isos` | List the catalog entries and exit |
+| `--iso-cache DIR` | Cache directory for downloaded images |
+| `--unattended` | Let VirtualBox answer the installer (6.1+) |
+| `--user NAME` | Guest user (default `vboxuser`) |
+| `--password PASS` | Guest password; prefer `EASYVBOX_PASSWORD` |
+| `--hostname NAME` | Guest hostname (default: the VM name) |
+| `--locale SPEC` | Installer locale (default `en_US`) |
+| `--country CODE` | Installer country (default `US`) |
+| `--timezone TZ` | Guest time zone (default `UTC`) |
+| `--install-additions`, `--no-install-additions` | Install Guest Additions (default: when the ISO is found) |
+| `--provision FILE` | Run a shell script in the guest after installing (repeatable) |
+| `--with-docker` | Install Docker and add the guest user to the `docker` group |
+
 ## Environment variables
 
 | Variable | Effect |
@@ -81,6 +99,10 @@ counterparts so a preset can always be overridden.
 | `EASYVBOX_PRESETS_DIR` | Alternative preset directory |
 | `EASYVBOX_HOST_RAM_MB` | Override detected host RAM (handy for tests/CI) |
 | `EASYVBOX_HOST_CPUS` | Override detected host CPU count |
+| `EASYVBOX_PASSWORD` | Guest password for `--unattended` (keeps it out of the command line) |
+| `EASYVBOX_ISO_CACHE` | ISO cache directory |
+| `EASYVBOX_ISO_CATALOG` | Alternative ISO catalog file |
+| `EASYVBOX_DOWNLOADER` | Replace curl/wget when fetching images |
 | `NO_COLOR` | Disable coloured output |
 
 ## Exit codes
@@ -215,6 +237,78 @@ suite uses a fake `VBoxManage`, so no hypervisor is required either.
 `--replace` refuses to run non-interactively unless you also pass `--yes`, and
 interactively it asks you to type the VM name. It deletes the VM **and its
 disks**.
+
+## Downloading the installer
+
+`--download` accepts a catalog name or a URL and leaves the image in the cache,
+so it is downloaded once and reused:
+
+```bash
+./scripts/create-vm.sh --list-isos
+./scripts/create-vm.sh --download ubuntu-24.04-server --preset server
+./scripts/create-vm.sh --download https://example.org/image.iso --name custom
+```
+
+Resolution, caching and checksum behaviour are documented in
+[`ISOS.md`](ISOS.md).
+
+## Unattended installs
+
+`--unattended` makes VirtualBox answer the installer. VirtualBox generates the
+answer file itself — `autounattend.xml` for Windows, preseed or kickstart for
+Linux distros it supports — and attaches it to the VM, so you do not choose a
+language, a keyboard, a time zone or a user by hand.
+
+```bash
+./scripts/create-vm.sh --download ubuntu-24.04-server --preset server \
+  --unattended --user dev --hostname lab --locale en_US --timezone UTC
+```
+
+What EasyVbox does on top of `VBoxManage unattended install`:
+
+- Passes the installer ISO, user, hostname, locale, country and time zone.
+- Installs Guest Additions when the ISO is present (`--no-install-additions` to
+  skip; the flag is dropped with a warning when the ISO is missing).
+- Generates a password if you do not supply one and prints it **once** at the
+  end. It is redacted as `***` in logs and in `--dry-run` output.
+- Skips its own ISO attach and boot-order flags, because VirtualBox handles both
+  in unattended mode (shown in the post-creation verification as "installer
+  media (attached by VBoxManage unattended install)").
+
+Password handling, in order of preference:
+
+```bash
+EASYVBOX_PASSWORD='...' ./scripts/create-vm.sh ... --unattended   # not in shell history
+./scripts/create-vm.sh ... --unattended --password '...'          # visible in ps/history
+./scripts/create-vm.sh ... --unattended                           # generated, shown once
+```
+
+### Provisioning the guest
+
+Both options run through VirtualBox's post-install hook, which is why they
+require `--unattended`:
+
+```bash
+# Your own script, inlined and executed after the installation finishes
+./scripts/create-vm.sh --download ubuntu-24.04-server --preset server \
+  --unattended --provision ~/bootstrap.sh --provision ~/tools.sh
+
+# The common case
+./scripts/create-vm.sh --download ubuntu-24.04-server --preset server \
+  --unattended --with-docker
+```
+
+Details worth knowing:
+
+- `--provision` base64-encodes the script and writes it to
+  `/var/tmp/easyvbox-provision-<n>.sh` inside the guest, so no network access is
+  needed to get it there.
+- Scripts run as root after install; add `sudo -u "$SUDO_USER"` if something must
+  belong to the interactive user.
+- Provisioning needs Guest Additions: without them the hook may not run. EasyVbox
+  warns when it cannot find them.
+- Windows guests support `--unattended`, but not `--provision`/`--with-docker`:
+  those are shell scripts (EasyVbox refuses with a clear message).
 
 ## Post-creation verification
 
