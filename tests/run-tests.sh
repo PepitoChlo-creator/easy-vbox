@@ -46,9 +46,9 @@ setup() {
   unset VBOXMANAGE MOCK_EXTPACK MOCK_BRIDGED MOCK_VERSION MOCK_FAIL_ON MOCK_OSTYPES_LIST
   unset MOCK_IGNORE EASYVBOX_DOWNLOADER EASYVBOX_ISO_CACHE EASYVBOX_ISO_CATALOG EASYVBOX_PASSWORD
   : >"$MOCK_LOG"
-  ISO="$TEST_TMP/fake.iso"
+  ISO="$TEST_TMP_CANON/fake.iso"
   : >"$ISO"
-  WIN_ISO="$TEST_TMP/win11.iso"
+  WIN_ISO="$TEST_TMP_CANON/win11.iso"
   : >"$WIN_ISO"
 }
 
@@ -118,7 +118,7 @@ sha_of() {
 # lists it, both served through tests/mock/fake-downloader.
 make_download_fixture() {
   local name="debian-12.9.0-amd64-netinst.iso"
-  DL_DIR="$TEST_TMP/download"
+  DL_DIR="$TEST_TMP_CANON/download"
   mkdir -p "$DL_DIR"
   printf 'fake iso contents for %s\n' "$name" >"$DL_DIR/$name"
   printf '%s *%s\n' "$(sha_of "$DL_DIR/$name")" "$name" >"$DL_DIR/SHA256SUMS"
@@ -127,12 +127,12 @@ make_download_fixture() {
   DL_ISO_NAME="$name"
   printf '%s\t%s\n%s\t%s\n' \
     "$DL_SUMS_URL" "$DL_DIR/SHA256SUMS" \
-    "$DL_ISO_URL" "$DL_DIR/$name" >"$TEST_TMP/dl-map.tsv"
-  export MOCK_DL_MAP="$TEST_TMP/dl-map.tsv"
-  export MOCK_DL_CALLS="$TEST_TMP/dl-calls.log"
+    "$DL_ISO_URL" "$DL_DIR/$name" >"$TEST_TMP_CANON/dl-map.tsv"
+  export MOCK_DL_MAP="$TEST_TMP_CANON/dl-map.tsv"
+  export MOCK_DL_CALLS="$TEST_TMP_CANON/dl-calls.log"
   export EASYVBOX_DOWNLOADER="$MOCK_DIR/fake-downloader"
   : >"$MOCK_DL_CALLS"
-  export EASYVBOX_ISO_CACHE="$TEST_TMP/isos"
+  export EASYVBOX_ISO_CACHE="$TEST_TMP_CANON/isos"
 }
 
 seed_vm() {
