@@ -1,1 +1,21 @@
-{"name":"ctf","description":"ctf preset","ram_mb":4096,"cpus":2,"disk_mb":40960,"nvme":true,"accelerate_3d":true,"headless":false}
+{
+  "schema": 2,
+  "name": "ctf",
+  "description": "Lightweight CTF box: fast boot, no 3D, small disk",
+  "ram_mb": 4096,
+  "cpus": 2,
+  "disk_mb": 40960,
+  "nvme": true,
+  "accelerate_3d": false,
+  "vram_mb": 32,
+  "graphics_controller": "vmsvga",
+  "firmware": "efi",
+  "tpm": "none",
+  "secure_boot": "off",
+  "nested_virt": false,
+  "usb": "ohci",
+  "headless": false,
+  "shared_folder": null,
+  "port_forwards": "",
+  "tags": "security,ctf,lightweight"
+}

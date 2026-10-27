@@ -1,1 +1,21 @@
-{"name":"minimal-testing","description":"minimal-testing preset","ram_mb":4096,"cpus":2,"disk_mb":40960,"nvme":true,"accelerate_3d":true,"headless":false}
+{
+  "schema": 2,
+  "name": "minimal-testing",
+  "description": "Tiny headless VM for CI smoke tests",
+  "ram_mb": 1024,
+  "cpus": 1,
+  "disk_mb": 10240,
+  "nvme": false,
+  "accelerate_3d": false,
+  "vram_mb": 16,
+  "graphics_controller": "vmsvga",
+  "firmware": "efi",
+  "tpm": "none",
+  "secure_boot": "off",
+  "nested_virt": false,
+  "usb": "ohci",
+  "headless": true,
+  "shared_folder": null,
+  "port_forwards": "",
+  "tags": "ci,testing,minimal"
+}

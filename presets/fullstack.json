@@ -1,1 +1,21 @@
-{"name":"fullstack","description":"fullstack preset","ram_mb":4096,"cpus":2,"disk_mb":40960,"nvme":true,"accelerate_3d":true,"headless":false}
+{
+  "schema": 2,
+  "name": "fullstack",
+  "description": "Web + Docker + databases; publishes 8080 and 8443",
+  "ram_mb": 12288,
+  "cpus": 6,
+  "disk_mb": 102400,
+  "nvme": true,
+  "accelerate_3d": false,
+  "vram_mb": 64,
+  "graphics_controller": "vmsvga",
+  "firmware": "efi",
+  "tpm": "none",
+  "secure_boot": "off",
+  "nested_virt": true,
+  "usb": "ohci",
+  "headless": false,
+  "shared_folder": null,
+  "port_forwards": "http:8080:80,https:8443:443",
+  "tags": "development,web,docker"
+}
