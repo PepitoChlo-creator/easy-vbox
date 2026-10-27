@@ -1,2 +1,32 @@
+# EasyVbox
+
+# Logs produced by the scripts
 *.log
+.easyvbox/
+
+# Test / coverage artefacts
+tests/tmp/
+coverage/
+
+# VirtualBox media (never commit disks)
+*.vdi
+*.vmdk
+*.vhd
+*.vbox
+*.vbox-prev
+*.nvram
+*.iso
+
+# Editors and OS files
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python / tooling caches
+__pycache__/
+.venv/
+.pytest_cache/

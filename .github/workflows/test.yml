@@ -1,8 +1,41 @@
 name: test
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n scripts/create-vm.sh
+
+      - name: Bash syntax
+        run: |
+          for f in scripts/*.sh tests/run-tests.sh tests/mock/VBoxManage; do
+            bash -n "$f"
+          done
+
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          shellcheck --version
+          shellcheck -S style scripts/*.sh tests/run-tests.sh tests/mock/VBoxManage
+
+      - name: Validate presets
+        run: ./scripts/validate-presets.sh
+
+      - name: Test suite
+        run: ./tests/run-tests.sh
+
+      - name: Dry run without VirtualBox
+        run: ./scripts/create-vm.sh --iso none --preset dev --dry-run
