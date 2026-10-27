@@ -1,1 +1,21 @@
-{"name":"windows11","description":"windows11 preset","ram_mb":4096,"cpus":2,"disk_mb":40960,"nvme":true,"accelerate_3d":true,"headless":false}
+{
+  "schema": 2,
+  "name": "windows11",
+  "description": "Windows 11 with TPM 2.0 + Secure Boot and a 128 GiB disk",
+  "ram_mb": 8192,
+  "cpus": 4,
+  "disk_mb": 131072,
+  "nvme": true,
+  "accelerate_3d": true,
+  "vram_mb": 256,
+  "graphics_controller": "vboxsvga",
+  "firmware": "efi",
+  "tpm": "2.0",
+  "secure_boot": "on",
+  "nested_virt": false,
+  "usb": "xhci",
+  "headless": false,
+  "shared_folder": null,
+  "port_forwards": "",
+  "tags": "windows,uefi,tpm"
+}

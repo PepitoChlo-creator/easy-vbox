@@ -1,1 +1,21 @@
-{"name":"data-science","description":"data-science preset","ram_mb":4096,"cpus":2,"disk_mb":40960,"nvme":true,"accelerate_3d":true,"headless":false}
+{
+  "schema": 2,
+  "name": "data-science",
+  "description": "ML and Jupyter workloads: big RAM, big disk",
+  "ram_mb": 16384,
+  "cpus": 8,
+  "disk_mb": 153600,
+  "nvme": true,
+  "accelerate_3d": false,
+  "vram_mb": 64,
+  "graphics_controller": "vmsvga",
+  "firmware": "efi",
+  "tpm": "none",
+  "secure_boot": "off",
+  "nested_virt": false,
+  "usb": "ohci",
+  "headless": false,
+  "shared_folder": null,
+  "port_forwards": "jupyter:8888:8888",
+  "tags": "ml,data,performance"
+}
