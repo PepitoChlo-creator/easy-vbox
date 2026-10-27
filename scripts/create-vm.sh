@@ -8,7 +8,7 @@
 # This script is intentionally a single file so it can be copied standalone.
 set -euo pipefail
 
-VERSION="3.0.1"
+VERSION="3.1.0"
 PROG="easy-vbox"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRESETS_DIR="${EASYVBOX_PRESETS_DIR:-$SCRIPT_DIR/../presets}"
@@ -50,6 +50,16 @@ log() {
 
 render_cmd() { local out="" a; for a in "$@"; do out+="$(printf '%q' "$a") "; done; printf '%s' "${out% }"; }
 
+# Secrets (the guest password) must never reach the log or the dry-run plan.
+SECRET=""
+redact() {
+  local text="$1"
+  if [[ -n "$SECRET" && "$text" == *"$SECRET"* ]]; then
+    text="${text//"$SECRET"/***}"
+  fi
+  printf '%s' "$text"
+}
+
 # Human-friendly quoting for the dry-run plan (still safe to copy/paste).
 render_pretty() {
   local out="" a
@@ -66,9 +76,9 @@ render_pretty() {
 LAST_VBOX_ERROR=""
 vbox() {
   local rendered rc=0 bin="${VBOX_BIN:-VBoxManage}"
-  rendered="$(render_cmd "$bin" "$@")"
+  rendered="$(redact "$(render_cmd "$bin" "$@")")"
   if $DRY_RUN; then
-    render_pretty "$bin" "$@"; printf '\n'
+    redact "$(render_pretty "$bin" "$@")"; printf '\n'
     return 0
   fi
   log "RUN: $rendered"
@@ -116,6 +126,10 @@ HEADLESS="" SHARED_FOLDER="" SHARED_NAME="HostShare" SHARED_RO=false
 NETWORK_TYPE="" BRIDGE_ADAPTER="" HOSTONLY_ADAPTER="" INTNET_NAME=""
 SSH_PORT="" EXTRA_FORWARDS=""
 START_MODE="" DRY_RUN=false VERIFY=true FORCE_RESOURCES=false ASSUME_YES=false
+ISO_DOWNLOAD="" ISO_CACHE=""
+UNATTENDED=false GUEST_USER="" GUEST_PASSWORD="" GUEST_PASSWORD_GENERATED=false
+GUEST_HOSTNAME="" GUEST_LOCALE="" GUEST_COUNTRY="" GUEST_TIMEZONE=""
+INSTALL_ADDITIONS="" PROVISION_SCRIPTS="" WITH_DOCKER=false GA_ISO=""
 REPLACE=false PRINT_CONFIG=false OSTYPE_OVERRIDE="" OSTYPE_WANTED="" ACTIVE_MACHINE_FOLDER=""
 
 VM_REGISTERED_BY_US=false
@@ -292,6 +306,224 @@ pick_ssh_port() {
 }
 
 # ---------------------------------------------------------------------------
+# ISO catalog and download
+#
+# `--download NAME` fetches an official image into a local cache and uses it as
+# the installer, so the usual "open a browser, find the right file, pass a path"
+# step disappears. The catalog is data (isos/catalog.tsv), not code.
+# ---------------------------------------------------------------------------
+iso_catalog_file() {
+  printf '%s' "${EASYVBOX_ISO_CATALOG:-$SCRIPT_DIR/../isos/catalog.tsv}"
+}
+
+iso_cache_dir() {
+  local dir="${ISO_CACHE:-${EASYVBOX_ISO_CACHE:-$HOME/.easyvbox/isos}}"
+  printf '%s' "$dir"
+}
+
+# Normalised catalog without comments or blank lines.
+catalog_entries() {
+  local f
+  f="$(iso_catalog_file)"
+  [[ -r "$f" ]] || return 0
+  awk -F'|' 'BEGIN { OFS = "|" }
+              /^[[:space:]]*#/ { next }
+              NF < 3 { next }
+              { sub(/[[:space:]]+$/, ""); print }' "$f"
+}
+
+catalog_entry() {  # catalog_entry NAME -> the matching line
+  local name="$1"
+  catalog_entries | awk -F'|' -v n="$name" '$1 == n { print; exit }'
+}
+
+catalog_field() {  # catalog_field LINE INDEX (1-based)
+  printf '%s' "$1" | awk -F'|' -v i="$2" '{ if (i <= NF) print $i }'
+}
+
+list_isos() {
+  local entries line name family size notes
+  entries="$(catalog_entries)"
+  if [[ -z "$entries" ]]; then
+    printf 'No ISO catalog found at %s\n' "$(iso_catalog_file)" >&2
+    return 1
+  fi
+  printf '%-24s %-9s %-7s %s\n' "NAME" "FAMILY" "SIZE" "DESCRIPTION"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    name="$(catalog_field "$line" 1)"
+    family="$(catalog_field "$line" 2)"
+    size="$(catalog_field "$line" 3)"
+    notes="$(catalog_field "$line" 8)"
+    printf '%-24s %-9s %-7s %s\n' "$name" "$family" "${size:+~${size}G}" "$notes"
+  done <<<"$entries"
+  printf '\nDownload with: %s --download NAME   (cache: %s)\n' "$PROG" "$(iso_cache_dir)"
+  printf 'Any other image: %s --download https://example.org/image.iso\n' "$PROG"
+}
+
+# Print the body of a URL (used for small checksum files).
+fetch_stdout() {
+  local url="$1"
+  if [[ -n "${EASYVBOX_DOWNLOADER:-}" ]]; then
+    "$EASYVBOX_DOWNLOADER" "$url"
+  elif have curl; then
+    curl -fsSL --retry 2 --connect-timeout 20 "$url"
+  elif have wget; then
+    wget -qO- "$url"
+  else
+    die "No downloader found: install curl or wget"
+  fi
+}
+
+# Download URL -> DEST, resuming when possible.
+fetch_file() {
+  local url="$1" dest="$2" rc=0
+  if [[ -n "${EASYVBOX_DOWNLOADER:-}" ]]; then
+    "$EASYVBOX_DOWNLOADER" "$url" "$dest"
+    return $?
+  fi
+  if have curl; then
+    curl -fL --retry 3 --connect-timeout 20 -C - -o "$dest" "$url" || rc=$?
+    # curl refuses to resume a file it considers complete (exit 33).
+    (( rc == 33 )) && rc=0
+  elif have wget; then
+    wget -c -O "$dest" "$url" || rc=$?
+  else
+    die "No downloader found: install curl or wget"
+  fi
+  return $rc
+}
+
+sha256_of() {  # sha256_of FILE -> hex digest (empty when no tool available)
+  local file="$1"
+  if have sha256sum; then
+    sha256sum "$file" 2>/dev/null | awk '{print $1}'
+  elif have shasum; then
+    shasum -a 256 "$file" 2>/dev/null | awk '{print $1}'
+  elif have openssl; then
+    openssl dgst -sha256 "$file" 2>/dev/null | awk '{print $NF}'
+  fi
+}
+
+# Resolve a catalog entry into FILENAME, URL and SHA256.
+resolve_download() {
+  local name="$1" entry checksums_url pattern direct_url checksum_url line
+  DL_FILENAME=""; DL_URL=""; DL_SHA256=""
+
+  if [[ "$name" == http://* || "$name" == https://* ]]; then
+    DL_FILENAME="$(printf '%s' "$name" | awk -F'/' '{print $NF}' | awk -F'?' '{print $1}')"
+    [[ -n "$DL_FILENAME" ]] || die "Cannot work out a file name from '$name'"
+    DL_URL="$name"
+    info "Using the given URL: $name"
+    return 0
+  fi
+
+  entry="$(catalog_entry "$name")"
+  if [[ -z "$entry" ]]; then
+    warn "Unknown ISO '$name'. Available entries:"
+    list_isos >&2
+    die_usage "Unknown ISO '$name' (see --list-isos, or pass a full URL)"
+  fi
+
+  checksums_url="$(catalog_field "$entry" 4)"
+  pattern="$(catalog_field "$entry" 5)"
+  direct_url="$(catalog_field "$entry" 6)"
+  checksum_url="$(catalog_field "$entry" 7)"
+
+  if [[ -n "$pattern" && -n "$checksums_url" ]]; then
+    info "Reading checksums: $checksums_url"
+    local listing=""
+    if $DRY_RUN; then
+      listing="$(fetch_stdout "$checksums_url" 2>/dev/null || true)"
+    else
+      listing="$(fetch_stdout "$checksums_url")" \
+        || die "Could not read $checksums_url (no network, or the catalog entry is out of date)"
+    fi
+    if [[ -z "$listing" && $DRY_RUN ]]; then
+      DL_FILENAME="${pattern#\*}"
+      DL_URL="${checksums_url%/*}/$DL_FILENAME"
+      warn "Could not read the checksum list now; the exact file name is resolved at download time"
+      return 0
+    fi
+    line="$(printf '%s\n' "$listing" | grep -F -- "${pattern#\*}" | head -n1)" || true
+    [[ -n "$line" ]] || die "No file matching '${pattern}' in $checksums_url (the catalog entry may be out of date)"
+    DL_SHA256="$(printf '%s' "$line" | awk 'NR==1{print $1}')"
+    DL_FILENAME="$(printf '%s\n' "$line" | awk 'NR==1{ $1 = ""; sub(/^[ \t]+/, ""); sub(/^\*/, ""); print; exit }')"
+    DL_URL="${checksums_url%/*}/$DL_FILENAME"
+    [[ "$DL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || die "Could not parse a SHA-256 from: $line"
+  elif [[ -n "$direct_url" ]]; then
+    DL_URL="$direct_url"
+    DL_FILENAME="${direct_url##*/}"
+    if [[ -n "$checksum_url" ]]; then
+      info "Reading checksum: $checksum_url"
+      if $DRY_RUN; then
+        DL_SHA256="$(fetch_stdout "$checksum_url" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+      else
+        DL_SHA256="$(fetch_stdout "$checksum_url" | awk 'NR==1{print $1}')" \
+          || die "Could not read $checksum_url"
+      fi
+    fi
+  else
+    die "Catalog entry '$name' has neither a file pattern nor a direct URL"
+  fi
+
+  [[ -n "$DL_FILENAME" ]] || die "Could not determine the file name for '$name'"
+  return 0
+}
+
+# Download (or reuse) the image and set ISO_PATH.
+download_iso() {
+  local wanted="$1" cache dest current
+  cache="$(iso_cache_dir)"
+
+  resolve_download "$wanted"
+  dest="$cache/$DL_FILENAME"
+
+  if [[ -e "$dest" ]]; then
+    if [[ -z "$DL_SHA256" ]]; then
+      info "Using cached image: $dest"
+      ISO_PATH="$dest"; return 0
+    fi
+    current="$(sha256_of "$dest")"
+    if [[ -n "$current" && "$current" == "$DL_SHA256" ]]; then
+      success "Cached image is up to date: $DL_FILENAME"
+      ISO_PATH="$dest"; return 0
+    fi
+    warn "Cached file does not match the published checksum; downloading again"
+  fi
+
+  mkdir -p "$cache" || die "Cannot create the ISO cache: $cache"
+  info "Downloading $DL_FILENAME"
+  printf '   from %s\n' "$DL_URL" >&2
+  printf '   to   %s\n' "$dest" >&2
+
+  if $DRY_RUN; then
+    printf 'curl -fL -C - -o %q %q\n' "$dest" "$DL_URL"
+    ISO_PATH="$dest"
+    return 0
+  fi
+
+  fetch_file "$DL_URL" "$dest" || die "Download failed: $DL_URL"
+
+  if [[ -n "$DL_SHA256" ]]; then
+    current="$(sha256_of "$dest")"
+    if [[ -n "$current" ]]; then
+      if [[ "$current" == "$DL_SHA256" ]]; then
+        success "Checksum verified"
+      else
+        rm -f "$dest"
+        die "Checksum mismatch for $DL_FILENAME (expected $DL_SHA256, got $current); the file was removed"
+      fi
+    else
+      warn "No sha256sum/shasum/openssl available; skipping checksum verification"
+    fi
+  fi
+
+  success "Downloaded $DL_FILENAME"
+  ISO_PATH="$dest"
+}
+
+# ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
 list_presets() {
@@ -398,12 +630,30 @@ SHARING
       --shared-folder SPEC  [name=]PATH[:ro] shared into the guest
       --shared-name NAME    Share name (default: HostShare)
 
+INSTALLER
+      --download NAME       Download an official image and use it (see --list-isos)
+      --list-isos           List the images --download knows about, and exit
+      --iso-cache DIR       Where downloaded images are kept (default ~/.easyvbox/isos)
+      --unattended          Let VirtualBox answer the installer (6.1+)
+      --user NAME           Guest user created during the unattended install
+      --password PASS       Guest password (EASYVBOX_PASSWORD is safer; generated if omitted)
+      --hostname NAME       Guest hostname
+      --locale SPEC         Installer locale (default en_US)
+      --country CODE        Installer country (default US)
+      --timezone TZ         Guest time zone (default UTC)
+      --install-additions   Install Guest Additions (default when the ISO is found)
+      --no-install-additions
+      --provision FILE      Run FILE in the guest after installing (repeatable)
+      --with-docker         Install Docker and add the guest user to its group
+
 EXAMPLES
   $PROG --iso ~/Downloads/ubuntu-24.04.iso --preset dev
   $PROG --iso ~/Downloads/Win11.iso --preset windows11 --name Win11
   $PROG --iso ~/Downloads/kali.iso --preset kali --ram 8G --cpus 4 --no-start
   $PROG --iso debian.iso --network bridged --bridge-adapter enp3s0 --shared-folder ~/src
   $PROG --iso debian.iso --preset server --headless --ssh-port 2200
+  $PROG --download ubuntu-24.04-server --preset server --unattended --user dev --with-docker
+  $PROG --download kali-latest --preset kali --unattended --provision setup.sh
 
 Exit codes: 0 success, 1 runtime failure, 2 usage error.
 EOF
@@ -436,6 +686,11 @@ parse_args() {
       --no-log)        LOG_FILE="/dev/null"; LOG_FILE_EXPLICIT=true; shift ;;
       --no-verify)     VERIFY=false; shift ;;
       --verify)        VERIFY=true; shift ;;
+      --list-isos)     list_isos; exit 0 ;;
+      --unattended)    UNATTENDED=true; shift ;;
+      --with-docker)   WITH_DOCKER=true; shift ;;
+      --install-additions)    INSTALL_ADDITIONS=true; shift ;;
+      --no-install-additions) INSTALL_ADDITIONS=false; shift ;;
       --)              shift; break ;;
       --*=*)
         key="${arg%%=*}"; val="$(opt_value "$arg")"
@@ -463,11 +718,20 @@ parse_args() {
           --shared-folder) SHARED_FOLDER="$val" ;;
           --shared-name) SHARED_NAME="$val" ;;
           --log-file) LOG_FILE="$val"; LOG_FILE_EXPLICIT=true ;;
+          --download) ISO_DOWNLOAD="$val" ;;
+          --iso-cache) ISO_CACHE="$val" ;;
+          --user) GUEST_USER="$val" ;;
+          --password) GUEST_PASSWORD="$val" ;;
+          --hostname) GUEST_HOSTNAME="$val" ;;
+          --locale) GUEST_LOCALE="$val" ;;
+          --country) GUEST_COUNTRY="$val" ;;
+          --timezone) GUEST_TIMEZONE="$val" ;;
+          --provision) PROVISION_SCRIPTS="${PROVISION_SCRIPTS}${PROVISION_SCRIPTS:+,}$val" ;;
           *) die_usage "Unknown option: $key" ;;
         esac
         shift
         ;;
-      --iso|--name|--preset|--ostype|--ram|--cpus|--disk|--vram|--graphics|--firmware|--usb|--tpm|--secure-boot|--machine-folder|--network|--bridge-adapter|--hostonly-adapter|--intnet-name|--ssh-port|--forward|--shared-folder|--shared-name|--log-file)
+      --iso|--name|--preset|--ostype|--ram|--cpus|--disk|--vram|--graphics|--firmware|--usb|--tpm|--secure-boot|--machine-folder|--network|--bridge-adapter|--hostonly-adapter|--intnet-name|--ssh-port|--forward|--shared-folder|--shared-name|--log-file|--download|--iso-cache|--user|--password|--hostname|--locale|--country|--timezone|--provision)
         (( $# >= 2 )) || die_usage "Option $arg needs a value"
         key="$arg"; val="$2"
         case "$key" in
@@ -494,6 +758,15 @@ parse_args() {
           --shared-folder) SHARED_FOLDER="$val" ;;
           --shared-name) SHARED_NAME="$val" ;;
           --log-file) LOG_FILE="$val"; LOG_FILE_EXPLICIT=true ;;
+          --download) ISO_DOWNLOAD="$val" ;;
+          --iso-cache) ISO_CACHE="$val" ;;
+          --user) GUEST_USER="$val" ;;
+          --password) GUEST_PASSWORD="$val" ;;
+          --hostname) GUEST_HOSTNAME="$val" ;;
+          --locale) GUEST_LOCALE="$val" ;;
+          --country) GUEST_COUNTRY="$val" ;;
+          --timezone) GUEST_TIMEZONE="$val" ;;
+          --provision) PROVISION_SCRIPTS="${PROVISION_SCRIPTS}${PROVISION_SCRIPTS:+,}$val" ;;
         esac
         shift 2
         ;;
@@ -509,7 +782,11 @@ resolve_iso() {
   if [[ "$ISO_PATH" == "none" || -z "$ISO_PATH" ]]; then
     return 0
   fi
-  [[ -f "$ISO_PATH" ]] || die "ISO not found: $ISO_PATH"
+  if [[ ! -f "$ISO_PATH" ]]; then
+    # A planned download only produces the file on a real run.
+    if $DRY_RUN; then warn "ISO not found: $ISO_PATH (dry run: continuing)"; return 0; fi
+    die "ISO not found: $ISO_PATH"
+  fi
   # VirtualBox needs an absolute path; resolve relative ones.
   ISO_PATH="$(cd "$(dirname "$ISO_PATH")" && pwd)/$(basename "$ISO_PATH")"
   [[ -r "$ISO_PATH" ]] || die "ISO is not readable: $ISO_PATH"
@@ -778,6 +1055,10 @@ validate_config() {
     require_positive_int "--ssh-port" "$SSH_PORT" 1 65535
   fi
 
+  if { [[ -n "$PROVISION_SCRIPTS" ]] || $WITH_DOCKER; } && ! $UNATTENDED; then
+    die_usage "--provision and --with-docker run through --unattended (add --unattended, or run the script by hand inside the guest)"
+  fi
+
   # Rules apply when the guest is Windows 11, even if this VirtualBox build
   # only knows the Windows10_64 identifier.
   if [[ "$OSTYPE" == "Windows11_64" || "${OSTYPE_WANTED:-}" == "Windows11_64" ]]; then
@@ -864,6 +1145,15 @@ shared_name=${SHARED_NAME}
 shared_readonly=$SHARED_RO
 start=$START_MODE
 machine_folder=$ACTIVE_MACHINE_FOLDER
+unattended=$UNATTENDED
+guest_user=${GUEST_USER:-none}
+guest_password=$( [[ -n "$GUEST_PASSWORD" ]] && echo set || echo none )
+guest_hostname=${GUEST_HOSTNAME:-none}
+guest_locale=${GUEST_LOCALE:-none}
+guest_timezone=${GUEST_TIMEZONE:-none}
+install_additions=${INSTALL_ADDITIONS:-auto}
+provision=$( [[ -n "$PROVISION_SCRIPTS" ]] && echo "$PROVISION_SCRIPTS" || echo none )
+with_docker=$WITH_DOCKER
 vbox_version=$VBOX_VERSION
 EOF
 }
@@ -875,6 +1165,135 @@ confirm_replace() {
   local answer
   read -rp "Type the VM name to confirm deletion: " answer
   [[ "$answer" == "$VM_NAME" ]] || die "Confirmation failed; nothing was changed"
+}
+
+# ---------------------------------------------------------------------------
+# Unattended install and provisioning
+#
+# VirtualBox can answer the installer itself: `VBoxManage unattended install`
+# generates the Windows autounattend.xml or the Linux preseed/kickstart file and
+# attaches it. EasyVbox exposes that instead of hand-writing answer files, and
+# reuses its `--post-install-command` hook to run a provisioning script on first
+# boot. That is the same switch for both jobs, which is why they ship together.
+# ---------------------------------------------------------------------------
+find_ga_iso() {
+  [[ -n "$GA_ISO" ]] && return 0
+  local candidate
+  for candidate in \
+    /usr/share/virtualbox/VBoxGuestAdditions.iso \
+    /usr/lib/virtualbox/VBoxGuestAdditions.iso \
+    /opt/VirtualBox/VBoxGuestAdditions.iso \
+    /Applications/VirtualBox.app/Contents/MacOS/VBoxGuestAdditions.iso \
+    "${VBOX_MSI_INSTALL_PATH:-}/VBoxGuestAdditions.iso"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then GA_ISO="$candidate"; return 0; fi
+  done
+  return 1
+}
+
+generate_password() {
+  if have openssl; then
+    openssl rand -base64 18 2>/dev/null | tr -d '/+=' | cut -c1-16
+  elif [[ -r /dev/urandom ]]; then
+    od -An -tx1 -N8 /dev/urandom 2>/dev/null | tr -d ' \n'
+  else
+    printf 'easyvbox%s' "$(date +%s)"
+  fi
+}
+
+# Build the command VirtualBox runs inside the guest after installing.
+build_post_install() {
+  local cmds=() f b64 i=0
+  if $WITH_DOCKER; then
+    cmds+=("curl -fsSL https://get.docker.com | sh")
+    cmds+=("usermod -aG docker ${GUEST_USER:-vboxuser}")
+  fi
+  if [[ -n "$PROVISION_SCRIPTS" ]]; then
+    local old_ifs="$IFS"
+    IFS=','
+    for f in $PROVISION_SCRIPTS; do
+      IFS="$old_ifs"
+      [[ -r "$f" ]] || die "Provisioning script not readable: $f"
+      i=$(( i + 1 ))
+      b64="$(base64 <"$f" | tr -d '\n')"
+      cmds+=("printf %s '$b64' | base64 -d > /var/tmp/easyvbox-provision-$i.sh && chmod +x /var/tmp/easyvbox-provision-$i.sh && /var/tmp/easyvbox-provision-$i.sh")
+      IFS=','
+    done
+    IFS="$old_ifs"
+  fi
+  (( ${#cmds[@]} == 0 )) && { printf ''; return 0; }
+  local out="" c
+  for c in "${cmds[@]}"; do out="${out:+$out; }$c"; done
+  printf '%s' "$out"
+}
+
+is_windows_guest() { [[ "${OSTYPE:-}" == Windows* || "${OSTYPE_WANTED:-}" == Windows* ]]; }
+
+# Fill in defaults common to every unattended run and validate the request.
+finalize_unattended() {
+  $UNATTENDED || return 0
+
+  if ! $VBOX_KNOWN; then
+    warn "Cannot verify the VirtualBox version; unattended install needs 6.1 or newer"
+  elif (( VBOX_MAJOR < 6 || (VBOX_MAJOR == 6 && VBOX_MINOR < 1) )); then
+    die "Unattended install requires VirtualBox 6.1 or newer (found: ${VBOX_VERSION})"
+  fi
+  if [[ -z "$ISO_PATH" || "$ISO_PATH" == "none" ]]; then
+    die_usage "--unattended needs an installer image (--iso PATH or --download NAME)"
+  fi
+
+  [[ -n "$GUEST_USER" ]] || GUEST_USER="vboxuser"
+  [[ "$GUEST_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die_usage "Invalid --user '$GUEST_USER' (lowercase letters, digits, _ and -)"
+  [[ -n "$GUEST_HOSTNAME" ]] || GUEST_HOSTNAME="$(printf '%s' "$VM_NAME" | tr '[:upper:]' '[:lower:]' | cut -c1-63)"
+  [[ -n "$GUEST_LOCALE" ]] || GUEST_LOCALE="en_US"
+  [[ -n "$GUEST_COUNTRY" ]] || GUEST_COUNTRY="US"
+  [[ -n "$GUEST_TIMEZONE" ]] || GUEST_TIMEZONE="UTC"
+
+  if [[ -z "$GUEST_PASSWORD" ]]; then
+    GUEST_PASSWORD="$(generate_password)"
+    GUEST_PASSWORD_GENERATED=true
+  fi
+  SECRET="$GUEST_PASSWORD"
+  [[ ${#GUEST_PASSWORD} -ge 6 ]] || die_usage "--password must be at least 6 characters"
+
+  if [[ -z "$INSTALL_ADDITIONS" ]]; then
+    if find_ga_iso; then INSTALL_ADDITIONS=true; else INSTALL_ADDITIONS=false; fi
+  fi
+  if is_true "$INSTALL_ADDITIONS" && ! find_ga_iso; then
+    warn "Guest Additions ISO not found; installing without it (post-install commands need it)"
+    INSTALL_ADDITIONS=false
+  fi
+
+  if $WITH_DOCKER || [[ -n "$PROVISION_SCRIPTS" ]]; then
+    if is_windows_guest; then
+      die_usage "Provisioning scripts are shell scripts: they only work for Linux guests (this image is Windows)"
+    fi
+    if ! is_true "$INSTALL_ADDITIONS"; then
+      warn "Provisioning runs after installation through the Guest Additions;"
+      warn "without them the post-install command may not run. See docs/ADVANCED.md"
+    fi
+  fi
+  return 0
+}
+
+run_unattended() {
+  $UNATTENDED || return 0
+  local post args=()
+  post="$(build_post_install)"
+
+  args=(--iso="$ISO_PATH" --user="$GUEST_USER" --password="$GUEST_PASSWORD"
+        --hostname="$GUEST_HOSTNAME" --locale="$GUEST_LOCALE"
+        --country="$GUEST_COUNTRY" --time-zone="$GUEST_TIMEZONE")
+  is_true "$INSTALL_ADDITIONS" && args+=(--install-additions)
+  [[ -n "$post" ]] && args+=(--post-install-command="$post")
+
+  info "Preparing an unattended installation (user: $GUEST_USER, host: $GUEST_HOSTNAME)"
+  if $DRY_RUN; then
+    vbox unattended install "$VM_NAME" "${args[@]}"
+    return 0
+  fi
+  vbox unattended install "$VM_NAME" "${args[@]}" \
+    || die "VBoxManage unattended install failed. See log: $LOG_FILE"
+  success "Unattended installation prepared"
 }
 
 # ---------------------------------------------------------------------------
@@ -1010,7 +1429,11 @@ create_vm() {
     --type hdd --medium "$disk_path" --nonrotational on || die "Could not attach the virtual disk"
   local boot_desc="$disk_controller"
 
-  if [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
+  if $UNATTENDED && [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
+    # `unattended install` attaches the installer and its answer file itself.
+    notes+=("unattended install")
+    boot_desc="installer (unattended)"
+  elif [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
     vbox storageattach "$VM_NAME" --storagectl "SATA" --port 1 --device 0 \
       --type dvddrive --medium "$ISO_PATH" || die "Could not attach the ISO ($ISO_PATH)"
     vbox modifyvm "$VM_NAME" --boot1 dvd --boot2 disk || warn "Could not set the boot order"
@@ -1031,6 +1454,8 @@ create_vm() {
     fi
     notes+=("share $SHARED_NAME=$SHARED_FOLDER")
   fi
+
+  run_unattended
 
   vbox modifyvm "$VM_NAME" --description \
     "EasyVbox v$VERSION | preset: ${PRESET:-custom} | created: $(date '+%F %T')" \
@@ -1102,6 +1527,8 @@ vwarn() {
   VCHECK_ISSUES+="     - $*"$'\n'
 }
 vskip() { printf '   · %s (not reported by this VirtualBox version)\n' "$1" >&2; VCHECK_SKIP=$(( VCHECK_SKIP + 1 )); }
+# A check that is deliberately not applicable (not a version limitation).
+vnote() { printf '   · %s\n' "$1" >&2; VCHECK_SKIP=$(( VCHECK_SKIP + 1 )); }
 
 # vcheck <label> <expected> <key...>   (exact, case-sensitive)
 vcheck() {
@@ -1198,7 +1625,9 @@ verify_vm() {
     vskip "disk attached"
   fi
 
-  if [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
+  if $UNATTENDED; then
+    vnote "installer media: attached by the unattended installer"
+  elif [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
     if mi_has "$VMI" "SATA-1-0"; then
       local dvd
       dvd="$(mi_field "$VMI" "SATA-1-0")"
@@ -1319,6 +1748,10 @@ main() {
   [[ -n "$PRESET" ]] && load_preset "$PRESET"
 
   # The ISO must be known before the OS type is guessed and the VM is named.
+  if [[ -n "$ISO_DOWNLOAD" ]]; then
+    [[ -n "$ISO_PATH" ]] && die_usage "--iso and --download cannot be used together"
+    download_iso "$ISO_DOWNLOAD"
+  fi
   resolve_iso
   prompt_for_iso
 
@@ -1333,6 +1766,8 @@ main() {
   clamp_resources
   parse_shared_folder
   resolve_vm_name
+  SECRET="$GUEST_PASSWORD"
+  finalize_unattended
 
   if [[ -z "$VBOX_BIN" ]] && ! $DRY_RUN && ! $PRINT_CONFIG; then
     die "VirtualBox is not installed or VBoxManage is not in PATH. See docs/INSTALL.md"
@@ -1364,6 +1799,17 @@ main() {
   verify_vm
   start_vm
   trap - EXIT
+
+  if $UNATTENDED && ! $DRY_RUN; then
+    printf '\n' >&2
+    info "Guest account"
+    if $GUEST_PASSWORD_GENERATED; then
+      printf '   user:     %s\n   password: %s  (generated, shown only once)\n' "$GUEST_USER" "$GUEST_PASSWORD" >&2
+    else
+      printf '   user:     %s\n   password: (the one you provided)\n' "$GUEST_USER" >&2
+    fi
+    printf '   hostname: %s\n' "$GUEST_HOSTNAME" >&2
+  fi
 
   if ! $DRY_RUN; then
     printf '\n' >&2

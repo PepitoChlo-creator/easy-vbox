@@ -12,6 +12,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/create-vm.sh"
 VALIDATOR="$ROOT_DIR/scripts/validate-presets.sh"
+CATALOG_VALIDATOR="$ROOT_DIR/scripts/validate-catalog.sh"
 MOCK_DIR="$ROOT_DIR/tests/mock"
 
 RED=''; GREEN=''; CYAN=''; NC=''
@@ -43,6 +44,7 @@ setup() {
   export EASYVBOX_HOST_RAM_MB=32768
   export EASYVBOX_HOST_CPUS=16
   unset VBOXMANAGE MOCK_EXTPACK MOCK_BRIDGED MOCK_VERSION MOCK_FAIL_ON MOCK_OSTYPES_LIST
+  unset MOCK_IGNORE EASYVBOX_DOWNLOADER EASYVBOX_ISO_CACHE EASYVBOX_ISO_CATALOG EASYVBOX_PASSWORD
   : >"$MOCK_LOG"
   ISO="$TEST_TMP/fake.iso"
   : >"$ISO"
@@ -105,6 +107,34 @@ run_test() {
   fi
 }
 
+
+# --- download test fixtures -------------------------------------------------
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+# Build a fake "official" download layout: an ISO plus a SHA256SUMS file that
+# lists it, both served through tests/mock/fake-downloader.
+make_download_fixture() {
+  local name="debian-12.9.0-amd64-netinst.iso"
+  DL_DIR="$TEST_TMP/download"
+  mkdir -p "$DL_DIR"
+  printf 'fake iso contents for %s\n' "$name" >"$DL_DIR/$name"
+  printf '%s *%s\n' "$(sha_of "$DL_DIR/$name")" "$name" >"$DL_DIR/SHA256SUMS"
+  DL_SUMS_URL="https://cdimage.example.org/debian/SHA256SUMS"
+  DL_ISO_URL="https://cdimage.example.org/debian/$name"
+  DL_ISO_NAME="$name"
+  printf '%s\t%s\n%s\t%s\n' \
+    "$DL_SUMS_URL" "$DL_DIR/SHA256SUMS" \
+    "$DL_ISO_URL" "$DL_DIR/$name" >"$TEST_TMP/dl-map.tsv"
+  export MOCK_DL_MAP="$TEST_TMP/dl-map.tsv"
+  export MOCK_DL_CALLS="$TEST_TMP/dl-calls.log"
+  export EASYVBOX_DOWNLOADER="$MOCK_DIR/fake-downloader"
+  : >"$MOCK_DL_CALLS"
+  export EASYVBOX_ISO_CACHE="$TEST_TMP/isos"
+}
+
 seed_vm() {
   local name="$1"
   printf '%s\n' "$name" >>"$MOCK_STATE/vms"
@@ -127,7 +157,7 @@ test_version() {
   hide_vbox
   run_cli --version
   assert_rc 0
-  assert_contains "version" "easy-vbox 3.0.1" "$OUT"
+  assert_contains "version" "easy-vbox 3.1.0" "$OUT"
 }
 
 test_list_presets_without_vbox() {
@@ -566,6 +596,209 @@ test_preset_list_is_readable() {
   assert_contains "desc" "Daily development" "$OUT"
 }
 
+# ---------------------------------------------------------------------------
+# ISO download
+# ---------------------------------------------------------------------------
+test_list_isos() {
+  hide_vbox
+  run_cli --list-isos
+  assert_rc 0
+  assert_contains "list" "debian-12-netinst" "$OUT"
+  assert_contains "list" "ubuntu-24.04-server" "$OUT"
+  assert_contains "list" "Download with" "$OUT"
+}
+
+test_download_unknown_iso() {
+  hide_vbox
+  run_cli --download definitely-not-an-iso --print-config
+  assert_rc 2
+  assert_contains "error" "Unknown ISO" "$ERR"
+}
+
+test_download_conflicts_with_iso() {
+  run_cli --iso "$ISO" --download debian-12-netinst
+  assert_rc 2
+  assert_contains "error" "cannot be used together" "$ERR"
+}
+
+test_download_verifies_checksum() {
+  use_mock
+  make_download_fixture
+  # Point the catalog entry at the fixture through a temporary catalog.
+  printf '%s\n' "test-iso|debian|0.7|$DL_SUMS_URL|*amd64-netinst.iso|||fixture" >"$TEST_TMP/catalog.tsv"
+  export EASYVBOX_ISO_CATALOG="$TEST_TMP/catalog.tsv"
+  run_cli --download test-iso --name dlvm --preset basic
+  assert_rc 0
+  assert_contains "download" "Checksum verified" "$ERR"
+  assert_file "$EASYVBOX_ISO_CACHE/$DL_ISO_NAME"
+  assert_log "--medium $EASYVBOX_ISO_CACHE/$DL_ISO_NAME"
+}
+
+test_download_reuses_cache() {
+  use_mock
+  make_download_fixture
+  printf '%s\n' "test-iso|debian|0.7|$DL_SUMS_URL|*amd64-netinst.iso|||fixture" >"$TEST_TMP/catalog.tsv"
+  export EASYVBOX_ISO_CATALOG="$TEST_TMP/catalog.tsv"
+  run_cli --download test-iso --name dl1 --preset basic
+  assert_rc 0
+  run_cli --download test-iso --name dl2 --preset basic
+  assert_rc 0
+  assert_contains "cache" "up to date" "$ERR"
+  local downloads
+  downloads="$(grep -cF "$DL_ISO_URL" "$MOCK_DL_CALLS" || true)"
+  [[ "$downloads" == "1" ]] || fail "expected the image to be downloaded once, got $downloads"
+}
+
+test_download_rejects_bad_checksum() {
+  use_mock
+  make_download_fixture
+  printf '0000000000000000000000000000000000000000000000000000000000000000 *%s\n' \
+    "$DL_ISO_NAME" >"$DL_DIR/SHA256SUMS"
+  printf '%s\n' "test-iso|debian|0.7|$DL_SUMS_URL|*amd64-netinst.iso|||fixture" >"$TEST_TMP/catalog.tsv"
+  export EASYVBOX_ISO_CATALOG="$TEST_TMP/catalog.tsv"
+  run_cli --download test-iso --name badvm --preset basic
+  assert_rc 1
+  assert_contains "error" "Checksum mismatch" "$ERR"
+  assert_no_file "$EASYVBOX_ISO_CACHE/$DL_ISO_NAME"
+  assert_no_log "createvm"
+}
+
+test_download_from_url() {
+  use_mock
+  make_download_fixture
+  printf '%s\t%s\n' "$DL_ISO_URL" "$DL_DIR/$DL_ISO_NAME" >"$TEST_TMP/dl-map.tsv"
+  run_cli --download "$DL_ISO_URL" --name urlvm --preset basic
+  assert_rc 0
+  assert_file "$EASYVBOX_ISO_CACHE/$DL_ISO_NAME"
+  assert_log "--medium $EASYVBOX_ISO_CACHE/$DL_ISO_NAME"
+}
+
+# ---------------------------------------------------------------------------
+# Unattended install
+# ---------------------------------------------------------------------------
+test_unattended_runs_vboxmanage() {
+  use_mock
+  export MOCK_EXTPACK=1
+  run_cli --iso "$ISO" --preset server --name auto1 --unattended --user dev --password 'S3cret-pass' --hostname lab
+  assert_rc 0
+  local args="$MOCK_STATE/unattended/auto1.args"
+  assert_file "$args"
+  assert_contains "args" "--user=dev" "$(cat "$args")"
+  assert_contains "args" "--password=S3cret-pass" "$(cat "$args")"
+  assert_contains "args" "--hostname=lab" "$(cat "$args")"
+  assert_contains "args" "--time-zone=UTC" "$(cat "$args")"
+  assert_contains "args" "--locale=en_US" "$(cat "$args")"
+  assert_contains "args" "--iso=$ISO" "$(cat "$args")"
+  # VirtualBox attaches the installer itself; EasyVbox must not attach it too.
+  assert_no_log "--type dvddrive --medium $ISO"
+  assert_contains "verify" "Unattended installation prepared" "$ERR"
+}
+
+test_unattended_generates_password() {
+  use_mock
+  run_cli --iso "$ISO" --preset server --name auto2 --unattended --log-file "$TEST_TMP/run.log"
+  assert_rc 0
+  assert_contains "account" "generated, shown only once" "$ERR"
+  local pw
+  pw="$(sed -n 's/^--password=//p' "$MOCK_STATE/unattended/auto2.args")"
+  [[ -n "$pw" ]] || fail "no password was passed to VBoxManage"
+  [[ ${#pw} -ge 8 ]] || fail "generated password is too short: $pw"
+  # The password must never reach the log file, and must be shown exactly once.
+  if grep -qF "$pw" "$TEST_TMP/run.log"; then fail "the guest password leaked into the log"; fi
+  local shown
+  shown="$(grep -cF "$pw" "$TEST_TMP/stderr" || true)"
+  [[ "$shown" == "1" ]] || fail "expected the password to be shown exactly once, shown $shown time(s)"
+}
+
+test_unattended_password_not_in_print_config() {
+  hide_vbox
+  run_cli --iso "$ISO" --unattended --password "TopSecret123" --print-config
+  assert_rc 0
+  assert_contains "config" "unattended=true" "$OUT"
+  assert_contains "config" "guest_password=set" "$OUT"
+  assert_not_contains "config" "TopSecret123" "$OUT"
+}
+
+test_unattended_needs_iso() {
+  run_cli --iso none --unattended
+  assert_rc 2
+  assert_contains "error" "needs an installer image" "$ERR"
+}
+
+test_unattended_needs_vbox61() {
+  use_mock
+  export MOCK_VERSION=6.0.24r139119
+  run_cli --iso "$ISO" --preset server --name oldvm --unattended
+  assert_rc 1
+  assert_contains "error" "6.1" "$ERR"
+  assert_no_log "createvm"
+}
+
+test_unattended_windows_allowed() {
+  use_mock
+  run_cli --iso "$WIN_ISO" --preset windows11 --name winauto --unattended --password 'WinPass123'
+  assert_rc 0
+  assert_file "$MOCK_STATE/unattended/winauto.args"
+}
+
+# ---------------------------------------------------------------------------
+# Provisioning
+# ---------------------------------------------------------------------------
+test_with_docker() {
+  use_mock
+  run_cli --iso "$ISO" --preset server --name dockervm --unattended --password 'DockerPass1' --with-docker
+  assert_rc 0
+  local args
+  args="$(cat "$MOCK_STATE/unattended/dockervm.args")"
+  assert_contains "docker" "get.docker.com" "$args"
+  assert_contains "docker" "usermod -aG docker vboxuser" "$args"
+}
+
+test_provision_script_is_inlined() {
+  use_mock
+  local script="$TEST_TMP/setup.sh"
+  printf '#!/bin/sh\necho "hello from provision"\n' >"$script"
+  run_cli --iso "$ISO" --preset server --name provvm --unattended --password 'ProvPass12' --provision "$script"
+  assert_rc 0
+  local args payload
+  args="$(cat "$MOCK_STATE/unattended/provvm.args")"
+  assert_contains "provision" "easyvbox-provision-1.sh" "$args"
+  payload="$(base64 <"$script" | tr -d '\n')"
+  assert_contains "provision" "$payload" "$args"
+}
+
+test_provision_requires_unattended() {
+  run_cli --iso "$ISO" --name novm --provision /tmp/x.sh
+  assert_rc 2
+  assert_contains "error" "unattended" "$ERR"
+}
+
+test_provision_rejects_windows_guest() {
+  run_cli --iso "$WIN_ISO" --unattended --name winprov --password 'WinPass123' --with-docker
+  assert_rc 2
+  assert_contains "error" "Linux guests" "$ERR"
+}
+
+test_unattended_dry_run_plan() {
+  hide_vbox
+  run_cli --iso "$ISO" --preset server --unattended --password 'DryRunPass1' --with-docker --dry-run
+  assert_rc 0
+  assert_contains "plan" "unattended install" "$OUT"
+  assert_contains "plan" "--user=vboxuser" "$OUT"
+  assert_contains "plan" "get.docker.com" "$OUT"
+  assert_not_contains "plan" "DryRunPass1" "$OUT"
+  assert_contains "plan" "--password=***" "$OUT"
+}
+
+test_validate_catalog() {
+  hide_vbox
+  OUT="$("$CATALOG_VALIDATOR" 2>&1 </dev/null)"
+  RC=$?
+  assert_rc 0
+  assert_contains "catalog" "0 error(s)" "$OUT"
+  assert_contains "catalog" "debian-12-netinst" "$OUT"
+}
+
 test_validate_presets() {
   hide_vbox
   OUT="$("$VALIDATOR" 2>&1 </dev/null)"
@@ -627,6 +860,25 @@ ALL_TESTS=(
   test_verify_skipped_in_dry_run
   test_verify_checks_shared_folder_and_iso
   test_log_file
+  test_list_isos
+  test_download_unknown_iso
+  test_download_conflicts_with_iso
+  test_download_verifies_checksum
+  test_download_reuses_cache
+  test_download_rejects_bad_checksum
+  test_download_from_url
+  test_unattended_runs_vboxmanage
+  test_unattended_generates_password
+  test_unattended_password_not_in_print_config
+  test_unattended_needs_iso
+  test_unattended_needs_vbox61
+  test_unattended_windows_allowed
+  test_with_docker
+  test_provision_script_is_inlined
+  test_provision_requires_unattended
+  test_provision_rejects_windows_guest
+  test_unattended_dry_run_plan
+  test_validate_catalog
   test_validate_presets
 )
 

@@ -1,0 +1,34 @@
+# EasyVbox ISO catalog
+#
+# Data file used by `--list-isos` and `--download NAME`. One entry per line,
+# fields separated by `|`. Lines starting with `#` and blank lines are ignored.
+#
+#   name | family | size_gb | checksums_url | file_pattern | direct_url | checksum_url | notes
+#
+# How an entry is resolved:
+#
+#   * If `file_pattern` is set, EasyVbox downloads `checksums_url` (a plain
+#     SHA256SUMS-style file), finds the line containing the pattern, and takes
+#     both the checksum and the file name from it. The ISO is then fetched from
+#     the same directory as `checksums_url`. This is the robust mode: the
+#     filename follows the upstream point release automatically.
+#   * Otherwise `direct_url` is used as-is. If `checksum_url` is set it must
+#     contain a SHA-256 hex digest (optionally followed by the file name).
+#
+# `size_gb` is an approximate download size, shown by `--list-isos`.
+#
+# These are official upstream locations, but they do change: if an entry stops
+# working, fix the line here, or use `--download https://.../image.iso` for a
+# one-off. Windows evaluation images are intentionally not listed because their
+# download links are generated per request and expire.
+
+ubuntu-24.04-desktop|ubuntu|5.7|https://releases.ubuntu.com/24.04/SHA256SUMS|*desktop-amd64.iso|||Ubuntu 24.04 LTS Desktop
+ubuntu-24.04-server|ubuntu|3.0|https://releases.ubuntu.com/24.04/SHA256SUMS|*live-server-amd64.iso|||Ubuntu 24.04 LTS Server (no desktop)
+ubuntu-22.04-server|ubuntu|1.9|https://releases.ubuntu.com/22.04/SHA256SUMS|*live-server-amd64.iso|||Ubuntu 22.04 LTS Server
+debian-12-netinst|debian|0.7|https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/SHA256SUMS|*amd64-netinst.iso|||Debian 12 netinst (small, installs from network)
+debian-12-dvd|debian|4.0|https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/SHA256SUMS|*amd64-DVD-1.iso|||Debian 12 DVD 1 (offline install)
+arch-latest|arch|1.2|https://archlinux.org/iso/latest/sha256sums.txt|archlinux-x86_64.iso|||Arch Linux, current monthly image
+kali-latest|kali|5.0|https://cdimage.kali.org/current/SHA256SUMS|*-installer-amd64.iso|||Kali Linux installer, current release
+rocky-9-minimal|rhel|2.0|https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM|*x86_64-minimal.iso|||Rocky Linux 9 minimal
+opensuse-tumbleweed-net|suse|0.5|||https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-NET-x86_64-Current.iso|https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-NET-x86_64-Current.iso.sha256|openSUSE Tumbleweed network installer
+alpine-virt|alpine|0.1|||https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-virt-3.22.1-x86_64.iso||Alpine virtual image, tiny and fast (pinned version: update from dl-cdn.alpinelinux.org)

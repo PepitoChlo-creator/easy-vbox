@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Stand-in for curl/wget in the test suite (EASYVBOX_DOWNLOADER).
+#
+#   fake-downloader URL          -> write the file body to stdout
+#   fake-downloader URL DEST     -> copy the file to DEST
+#
+# URLs are mapped to local files with MOCK_DL_MAP, a TSV of "URL<TAB>PATH".
+# Every requested URL is appended to MOCK_DL_CALLS so tests can prove that a
+# cached image is not downloaded twice.
+set -uo pipefail
+
+url="${1:?usage: fake-downloader URL [DEST]}"
+dest="${2:-}"
+map="${MOCK_DL_MAP:?MOCK_DL_MAP must point to a URL-to-path mapping file}"
+calls="${MOCK_DL_CALLS:-/dev/null}"
+
+printf '%s\n' "$url" >>"$calls"
+
+path="$(awk -F'\t' -v u="$url" '$1 == u { print $2; exit }' "$map")"
+if [[ -z "$path" ]]; then
+  printf 'fake-downloader: no mapping for %s\n' "$url" >&2
+  exit 22
+fi
+if [[ ! -r "$path" ]]; then
+  printf 'fake-downloader: mapped file is not readable: %s\n' "$path" >&2
+  exit 22
+fi
+
+if [[ -z "$dest" ]]; then
+  cat "$path"
+else
+  mkdir -p "$(dirname "$dest")"
+  cp "$path" "$dest"
+fi
