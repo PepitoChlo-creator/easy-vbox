@@ -51,7 +51,7 @@ jobs:
           ' CHANGELOG.md > release-notes.md
           if [ -s release-notes.md ]; then
             echo "notes_source=changelog" >> "$GITHUB_ENV"
-            { printf '## Qué incluye\n'; cat release-notes.md; } >> release-notes.md.tmp
+            { printf "## What's included\n"; cat release-notes.md; } >> release-notes.md.tmp
             mv release-notes.md.tmp release-notes.md
           else
             echo "notes_source=generated" >> "$GITHUB_ENV"

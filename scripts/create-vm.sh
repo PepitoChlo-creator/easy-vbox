@@ -8,7 +8,7 @@
 # This script is intentionally a single file so it can be copied standalone.
 set -euo pipefail
 
-VERSION="3.0.0"
+VERSION="3.0.1"
 PROG="easy-vbox"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRESETS_DIR="${EASYVBOX_PRESETS_DIR:-$SCRIPT_DIR/../presets}"
@@ -1101,7 +1101,7 @@ vwarn() {
   VCHECK_WARN=$(( VCHECK_WARN + 1 ))
   VCHECK_ISSUES+="     - $*"$'\n'
 }
-vskip() { printf '   · %s (no lo informa esta versión de VirtualBox)\n' "$1" >&2; VCHECK_SKIP=$(( VCHECK_SKIP + 1 )); }
+vskip() { printf '   · %s (not reported by this VirtualBox version)\n' "$1" >&2; VCHECK_SKIP=$(( VCHECK_SKIP + 1 )); }
 
 # vcheck <label> <expected> <key...>   (exact, case-sensitive)
 vcheck() {
@@ -1110,7 +1110,7 @@ vcheck() {
   if ! key="$(mi_first_key "$VMI" "$@")"; then vskip "$label"; return 0; fi
   got="$(mi_field "$VMI" "$key")"
   if [[ "$got" == "$want" ]]; then vok "$label: $got"
-  else vwarn "$label: se esperaba '$want' y se obtuvo '${got:-vacío}'"
+  else vwarn "$label: expected '$want', got '${got:-empty}'"
   fi
 }
 # vcheck_ci <label> <expected> <key...>  (case-insensitive)
@@ -1122,7 +1122,7 @@ vcheck_ci() {
   if [[ "$(printf '%s' "$got" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')" ]]; then
     vok "$label: $got"
   else
-    vwarn "$label: se esperaba '$want' y se obtuvo '${got:-vacío}'"
+    vwarn "$label: expected '$want', got '${got:-empty}'"
   fi
 }
 
@@ -1135,24 +1135,24 @@ verify_vm() {
   local dump
   dump="$("$VBOX_BIN" showvminfo "$VM_NAME" --machinereadable 2>/dev/null)" || dump=""
   if [[ -z "$dump" ]]; then
-    vwarn "no se pudo leer la configuración con showvminfo"
+    vwarn "could not read the configuration with showvminfo"
     return 0
   fi
   VMI="$(mktemp 2>/dev/null || echo "$HOME/easyvbox-verify.$$")"
   printf '%s\n' "$dump" >"$VMI" 2>/dev/null || {
-    warn "no se pudo guardar la configuración para verificarla"
+    warn "could not save the configuration for verification"
     VMI=""
     return 0
   }
 
   # Hardware
-  vcheck "memoria (MiB)" "$RAM_MB" memory memorysize
+  vcheck "memory (MiB)" "$RAM_MB" memory memorysize
   vcheck "CPUs" "$CPUS" cpus
   vcheck "VRAM (MiB)" "$VRAM_MB" vram
   vcheck_ci "firmware" "$FIRMWARE" firmware
-  vcheck_ci "gráficos" "$GRAPHICS" graphicscontroller graphics-controller
+  vcheck_ci "graphics" "$GRAPHICS" graphicscontroller graphics-controller
   vcheck_ci "3D" "$(is_true "$ENABLE_3D" && echo on || echo off)" accelerate3d accelerate-3d
-  vcheck_ci "virtualización anidada" "$(is_true "$NESTED_VIRT" && echo on || echo off)" nested-hw-virt nested_hw_virt
+  vcheck_ci "nested virtualization" "$(is_true "$NESTED_VIRT" && echo on || echo off)" nested-hw-virt nested_hw_virt
   if [[ "$TPM_TYPE" != "none" ]]; then
     vcheck_ci "TPM" "$TPM_TYPE" tpm-type tpmtype
   fi
@@ -1178,11 +1178,11 @@ verify_vm() {
     i=$(( i + 1 ))
   done
   if is_true "$USE_NVME"; then
-    if $found_nvme; then vok "controladora NVMe presente"
-    else vwarn "no se encontró la controladora NVMe"; fi
+    if $found_nvme; then vok "NVMe controller present"
+    else vwarn "NVMe controller not found"; fi
   fi
-  if $found_sata; then vok "controladora SATA presente"
-  else vwarn "no se encontró la controladora SATA"; fi
+  if $found_sata; then vok "SATA controller present"
+  else vwarn "SATA controller not found"; fi
 
   local disk_ctl="SATA"
   is_true "$USE_NVME" && disk_ctl="NVMe"
@@ -1190,12 +1190,12 @@ verify_vm() {
     local medium
     medium="$(mi_field "$VMI" "$disk_ctl-0-0")"
     if [[ -n "$medium" && "$medium" != "none" ]]; then
-      vok "disco en $disk_ctl puerto 0: $(basename "$medium")"
+      vok "disk on $disk_ctl port 0: $(basename "$medium")"
     else
-      vwarn "no hay disco conectado en $disk_ctl puerto 0"
+      vwarn "no disk attached on $disk_ctl port 0"
     fi
   else
-    vskip "disco conectado"
+    vskip "disk attached"
   fi
 
   if [[ -n "$ISO_PATH" && "$ISO_PATH" != "none" ]]; then
@@ -1203,48 +1203,48 @@ verify_vm() {
       local dvd
       dvd="$(mi_field "$VMI" "SATA-1-0")"
       if [[ "$dvd" == "$ISO_PATH" ]]; then
-        vok "ISO conectada: $(basename "$ISO_PATH")"
+        vok "ISO attached: $(basename "$ISO_PATH")"
       else
-        vwarn "la ISO conectada no es la esperada ('${dvd:-vacío}')"
+        vwarn "attached ISO does not match ('${dvd:-empty}')"
       fi
     else
-      vskip "ISO conectada"
+      vskip "ISO attached"
     fi
-    vcheck_ci "orden de arranque" "dvd" boot1
+    vcheck_ci "boot order" "dvd" boot1
   else
-    vcheck_ci "orden de arranque" "disk" boot1
+    vcheck_ci "boot order" "disk" boot1
   fi
 
   # Networking and sharing
   if [[ "$NETWORK_TYPE" == "nat" && -n "$SSH_PORT" && "$SSH_PORT" != "none" ]]; then
     if grep -qF ",tcp,,${SSH_PORT},,22" "$VMI" 2>/dev/null; then
-      vok "SSH reenviado en el puerto $SSH_PORT"
+      vok "SSH forwarded on host port $SSH_PORT"
     elif mi_has "$VMI" "Forwarding(0)"; then
-      vwarn "no se encontró el reenvío SSH al puerto $SSH_PORT"
+      vwarn "SSH forward on host port $SSH_PORT not found"
     else
-      vskip "reenvío SSH"
+      vskip "SSH port forward"
     fi
   fi
   if [[ -n "$SHARED_FOLDER" ]]; then
     if grep -qE "^\"?SharedFolderNameHost\(0\)=\"?${SHARED_NAME}\"?$" "$VMI" 2>/dev/null; then
-      vok "carpeta compartida '$SHARED_NAME' registrada"
+      vok "shared folder '$SHARED_NAME' registered"
     elif mi_has "$VMI" "SharedFolderNameHost(0)"; then
-      vwarn "la carpeta compartida no se registró con el nombre '$SHARED_NAME'"
+      vwarn "shared folder not registered as '$SHARED_NAME'"
     else
-      vwarn "no se encontró la carpeta compartida"
+      vwarn "shared folder not found"
     fi
   fi
 
   log "VERIFY: ok=$VCHECK_OK warn=$VCHECK_WARN skip=$VCHECK_SKIP"
   local skipped=""
-  (( VCHECK_SKIP > 0 )) && skipped=" · $VCHECK_SKIP sin datos"
+  (( VCHECK_SKIP > 0 )) && skipped=" · $VCHECK_SKIP not reported"
   if (( VCHECK_WARN == 0 )); then
-    success "Verificación correcta ($VCHECK_OK comprobaciones$skipped)"
+    success "Verification passed ($VCHECK_OK checks$skipped)"
   else
-    warn "Verificación con avisos: $VCHECK_WARN ajuste(s) no aplicados, $VCHECK_OK correctos"
+    warn "Verification with warnings: $VCHECK_WARN setting(s) not applied, $VCHECK_OK correct"
     printf '%s' "$VCHECK_ISSUES" >&2
-    printf '   La VM existe y es usable; revisa estos ajustes en su configuración.\n' >&2
-    printf '   Detalle completo: %s  ·  Oculta esta comprobación con --no-verify\n' "${LOG_FILE}" >&2
+    printf '   The VM exists and is usable; check these settings in its configuration.\n' >&2
+    printf '   Full details: %s  ·  Hide this check with --no-verify\n' "${LOG_FILE}" >&2
   fi
   rm -f "$VMI" 2>/dev/null || true
 }
