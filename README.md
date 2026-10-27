@@ -2,83 +2,223 @@
 
 **Create great VirtualBox VMs in seconds, not 15 minutes of clicking.**
 
-Tired of the VirtualBox wizard? Forgetting TPM for Windows 11? Using slow SATA disks by default? Never remembering "good settings"?
-
-**EasyVbox solves this with one command and battle-tested presets.**
+![tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)
+![shellcheck](https://img.shields.io/badge/shellcheck-clean-brightgreen)
+![license](https://img.shields.io/badge/license-MIT-blue)
+![bash](https://img.shields.io/badge/bash-3.2%2B-4EAA25)
 
 ```bash
-./scripts/create-vm.sh --iso ~/Downloads/ubuntu-24.04.iso --preset fullstack
+./scripts/create-vm.sh --iso ~/Downloads/ubuntu-24.04.iso --preset dev
 ```
 
-## Why This Exists
+Tired of the VirtualBox wizard? Forgetting TPM for Windows 11? Getting a SATA
+disk when you wanted NVMe? Never remembering "good settings"?
 
-Creating VMs in VirtualBox is unnecessarily painful for power users and developers.
+EasyVbox is one bash script and a set of battle-tested presets that create a
+correct VM — storage, firmware, networking, clipboard — in one command.
 
-EasyVbox gives you:
-- Smart defaults based on your machine
-- 12 high-quality presets for real use cases
-- Automatic Windows 11 compliance (TPM 2.0 + Secure Boot)
-- NVMe instead of slow SATA
-- Easy bridged networking and shared folders
-- Dry-run mode so you can see what will happen
+---
 
-## Quick Start
+## Why this exists
+
+The VirtualBox GUI is fine for one VM and painful for the tenth. The CLI is
+worse: `createvm`, `modifyvm`, `storagectl`, `storageattach`, `createmedium`
+and a dozen flags in the right order, before you even install the guest.
+
+EasyVbox wraps all of it with:
+
+- **12 presets that are actually different** (RAM, CPUs, disk, 3D, USB, ports),
+  not the same config with a different filename
+- **Correct storage layout** — NVMe on the PCIe bus with a separate SATA
+  controller for the installer DVD (NVMe cannot hold optical media)
+- **Windows 11 compliance** — UEFI, TPM 2.0, Secure Boot and minimum resources
+- **Graceful degradation** — detects VirtualBox version and Extension Pack,
+  skips what your build cannot do instead of failing halfway
+- **A dry-run plan you can read and paste**
+
+---
+
+## Quick start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/easy-vbox.git
+git clone https://github.com/PepitoChlo-creator/easy-vbox.git
 cd easy-vbox
-chmod +x scripts/*.sh
-./scripts/install.sh
 
-./scripts/create-vm.sh --iso your.iso --preset dev
+./scripts/install.sh                     # checks VirtualBox, makes scripts executable
+./scripts/create-vm.sh --list-presets    # see the presets
+./scripts/create-vm.sh --iso ubuntu.iso --preset dev --dry-run   # inspect the plan
+./scripts/create-vm.sh --iso ubuntu.iso --preset dev             # build it
 ```
 
-Or interactive:
+Interactive mode (no arguments) asks for the ISO and the preset:
+
 ```bash
 ./scripts/create-vm.sh
 ```
 
-## Presets (12 total)
+---
 
-- `basic` — Quick tests
-- `dev` — Daily development (recommended default)
-- `fullstack` — Web + Docker + databases
-- `server` — Homelab (headless)
-- `desktop` — Comfortable daily use
-- `gaming` — High performance
-- `windows11` — Windows 11 (TPM + Secure Boot forced)
-- `kali` — Penetration testing
-- `ctf` — Capture The Flag
-- `android-dev` — Android development (high RAM for emulators)
-- `data-science` — ML / Jupyter
-- `minimal-testing` — CI and lightweight testing
+## The 60-second tour
 
-## Features
+`--dry-run` prints exactly what will run — nothing is created or modified:
 
-- Smart resource detection
-- Bridged networking (`--network bridged`)
-- Guest Additions helper
-- One-command shared folders
-- `--dry-run`
-- Fully scriptable
-- Works without extra tools (graceful fallbacks)
+```text
+$ ./scripts/create-vm.sh --iso ubuntu-24.04.iso --preset fullstack --dry-run
+# EasyVbox v3.0.0 — dry run plan (nothing will be changed)
+# preset: fullstack
+# vm: ubuntu-24.04 | iso: /home/you/ubuntu-24.04.iso | ram: 12288 MiB | cpus: 6
+VBoxManage createvm --name ubuntu-24.04 --ostype Ubuntu_64 --register --basefolder '/home/you/VirtualBox VMs'
+VBoxManage modifyvm ubuntu-24.04 --memory 12288 --cpus 6 --vram 64 --graphicscontroller vmsvga --firmware efi \
+  --ioapic on --nestedpaging on --clipboard-mode bidirectional --draganddrop bidirectional --nested-hw-virt on \
+  --usb on --nic1 nat --natpf1 ssh,tcp,,2222,,22 --natpf2 http,tcp,,8080,,80 --natpf3 https,tcp,,8443,,443
+VBoxManage storagectl ubuntu-24.04 --name NVMe --add pcie --controller NVMe --portcount 1 --bootable on
+VBoxManage storagectl ubuntu-24.04 --name SATA --add sata --controller IntelAhci --portcount 3 --bootable on
+VBoxManage createmedium disk --filename '/home/you/VirtualBox VMs/ubuntu-24.04/ubuntu-24.04.vdi' \
+  --size 102400 --variant Standard --format VDI
+VBoxManage storageattach ubuntu-24.04 --storagectl NVMe --port 0 --device 0 --type hdd \
+  --medium '/home/you/VirtualBox VMs/ubuntu-24.04/ubuntu-24.04.vdi' --nonrotational on
+VBoxManage storageattach ubuntu-24.04 --storagectl SATA --port 1 --device 0 --type dvddrive \
+  --medium /home/you/ubuntu-24.04.iso
+VBoxManage modifyvm ubuntu-24.04 --boot1 dvd --boot2 disk
+VBoxManage startvm ubuntu-24.04 --type gui
+```
 
-## Technical Highlights
+That is the whole trick: the plan is the implementation, so what you read is
+what you get.
 
-- Always EFI
-- Dynamic VDI disks
-- NAT with SSH port 2222 by default
-- Windows 11 preset forces minimum requirements + TPM 2.0 + Secure Boot
-- Single-file main script for easy standalone use
+---
+
+## Presets
+
+| Preset | RAM | CPUs | Disk | What makes it different |
+|---|---:|---:|---:|---|
+| `basic` | 2 GiB | 2 | 25 GiB | Lightweight, no 3D, USB 1.1 for maximum compatibility |
+| `dev` | 8 GiB | 4 | 60 GiB | **Recommended default**: 3D, nested virtualization, USB 3.0 |
+| `fullstack` | 12 GiB | 6 | 100 GiB | Docker/web work; publishes `8080` and `8443` |
+| `server` | 4 GiB | 2 | 50 GiB | Headless homelab box, no GPU, SSH only |
+| `desktop` | 6 GiB | 4 | 80 GiB | Comfortable day-to-day desktop VM |
+| `gaming` | 16 GiB | 8 | 120 GiB | 256 MiB VRAM, VBoxSVGA, 3D acceleration |
+| `windows11` | 8 GiB | 4 | 128 GiB | UEFI + TPM 2.0 + Secure Boot enforced |
+| `kali` | 6 GiB | 4 | 80 GiB | Nested virtualization for VMs inside the guest |
+| `ctf` | 4 GiB | 2 | 40 GiB | Fast boot, no 3D, small footprint |
+| `android-dev` | 8 GiB | 4 | 100 GiB | High RAM for emulators, nested virt, `adb` on 5555 |
+| `data-science` | 16 GiB | 8 | 150 GiB | Big RAM/disk, Jupyter on 8888 |
+| `minimal-testing` | 1 GiB | 1 | 10 GiB | Tiny headless CI VM, SATA only |
+
+Any preset value can be overridden from the command line — **your flags win**:
+
+```bash
+./scripts/create-vm.sh --iso kali.iso --preset gaming --ram 8G --cpus 4 --no-3d
+```
+
+Details, schema and how to add your own: [`docs/PRESETS.md`](docs/PRESETS.md).
+
+---
+
+## What it does for you
+
+**Smart defaults.** RAM/CPU are derived from the host and clamped to a safe
+value (host RAM minus 2 GiB), so a 16 GiB preset on an 8 GiB laptop becomes
+6 GiB with a warning instead of a swap storm. `--force-resources` overrides.
+
+**Correct storage.** The default is an NVMe controller (`--add pcie
+--controller NVMe --portcount 1`), which is where VirtualBox actually exposes
+NVMe. The installer ISO goes on a separate SATA controller because NVMe does
+not support DVD drives. Pick `--no-nvme` for classic SATA.
+
+**Windows 11 without drama.** The `windows11` preset sets EFI, TPM 2.0, Secure
+Boot and raises RAM/CPU/disk to Microsoft's minimums. On builds where
+`--secure-boot` is unavailable, EasyVbox falls back to enrolling the NVRAM
+keys.
+
+**It knows what your VirtualBox can do.** Version checks gate TPM and Secure
+Boot (7.0+), the Extension Pack gates USB 2.0/3.0, and 3D on 7.1.x gets a
+warning about the known regressions. Optional settings that fail become
+warnings, not half-created VMs.
+
+**Networking that works.** NAT with SSH forwarded on `2222` by default; if that
+host port is taken by another VM it picks the next free one. Also `bridged`
+(with adapter auto-detection), `hostonly`, `intnet` and `none`, plus repeatable
+`--forward name:host:guest` rules.
+
+**Shared folders in one flag.** `--shared-folder ~/src` or
+`--shared-folder code=~/src:ro`.
+
+**Safe by construction.** `--dry-run` changes nothing (not even a folder),
+`--print-config` shows the resolved values, `--name` collisions are refused,
+and `--replace` demands confirmation before deleting anything.
+
+---
+
+## Requirements
+
+| Component | Notes |
+|---|---|
+| VirtualBox | 6.1+; **7.0+** for TPM 2.0 and Secure Boot |
+| Operating system | Linux and macOS. Windows via Git Bash works for the CLI, but nested virtualization is not available; run the VM from the Windows host |
+| Shell | bash 3.2+ (macOS default bash works) |
+| Dependencies | none for VM creation; `jq` **or** `python3` only for `validate-presets.sh` |
+| Extension Pack | optional; needed for USB 2.0/3.0 passthrough |
+
+Apple Silicon macs can only run ARM guests and VirtualBox support there is
+limited; x86 ISO images will not boot.
+
+---
+
+## Command-line cheat sheet
+
+```bash
+--iso PATH              Installer image ('none' for a blank VM)
+--preset NAME           Start from a preset
+--name NAME             VM name (default: derived from the ISO file name)
+--ram 8G --cpus 4 --disk 60G --vram 128
+--nvme / --no-nvme      Storage controller
+--3d / --no-3d          Hardware 3D acceleration
+--network nat|bridged|hostonly|intnet|none
+--bridge-adapter eth0   Bridged interface (auto-detected by default)
+--ssh-port 2222         Host port forwarded to guest 22 ('none' to disable)
+--forward http:8080:80  Extra port forward (repeatable)
+--shared-folder SPEC    [name=]PATH[:ro]
+--headless | --no-start | --gui
+--dry-run | --print-config | --list-presets
+```
+
+Full reference, examples and environment variables:
+[`docs/ADVANCED.md`](docs/ADVANCED.md).
+
+---
+
+## Tests
+
+No VirtualBox needed — the suite drives a fake `VBoxManage` and checks the exact
+command sequence:
+
+```bash
+./tests/run-tests.sh          # 44 tests
+./tests/run-tests.sh -v       # show every VBoxManage call
+./scripts/validate-presets.sh # schema + docs coverage of all presets
+make test                     # both of the above + shellcheck, if installed
+```
+
+---
+
+## Documentation
+
+- [`docs/INSTALL.md`](docs/INSTALL.md) — installing VirtualBox and the Extension Pack
+- [`docs/PRESETS.md`](docs/PRESETS.md) — every preset, the JSON schema, adding your own
+- [`docs/ADVANCED.md`](docs/ADVANCED.md) — full flag reference and recipes
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — when VirtualBox says no
+- [`CHANGELOG.md`](CHANGELOG.md) — what changed in v3.0.0
+
+---
 
 ## Contributing
 
-Best contributions are new high-quality presets.
-
-See `docs/PRESETS.md` and `CONTRIBUTING.md`.
+The most valuable contribution is a **real** preset with real values, validated
+and documented. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
 
 **Stop fighting the wizard. Start shipping.**
