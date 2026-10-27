@@ -3,6 +3,37 @@
 All notable changes to EasyVbox are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.1.0] — 2026-10-27
+
+Three features that remove the remaining manual steps around a VM.
+
+### Added
+
+- **ISO downloads**: `--download NAME` (or a URL) resolves the current upstream
+  file, verifies its SHA-256 and caches it in `~/.easyvbox/isos`, reusing it on
+  later runs. `--list-isos` shows the catalog, `--iso-cache DIR` moves the
+  cache. Entries are data (`isos/catalog.tsv`) and are validated in CI by
+  `scripts/validate-catalog.sh`. Verified checksums come from upstream
+  `SHA256SUMS` files, so point releases keep working without edits.
+- **Unattended installs**: `--unattended` exposes VirtualBox's own answer-file
+  generation (`autounattend.xml`, preseed, kickstart) with `--user`,
+  `--password`, `--hostname`, `--locale`, `--country`, `--timezone` and
+  `--install-additions`. A password is generated when omitted, printed once and
+  redacted as `***` in logs and dry-run output.
+- **Provisioning**: `--provision FILE` (repeatable) inlines shell scripts into
+  the guest's post-install hook, and `--with-docker` installs Docker and adds the
+  guest user to its group. Both require `--unattended` and are refused for
+  Windows guests with an explanation.
+- 19 new tests (69 total), including a fake downloader so download, cache reuse,
+  checksum mismatch and direct URLs are covered without network access.
+- `docs/ISOS.md`, plus `make catalog` and `make isos`.
+
+### Changed
+
+- `--dry-run` no longer needs the network for a planned download, and never
+  leaks the guest password.
+- README, ADVANCED and TROUBLESHOOTING document the new flow.
+
 ## [3.0.1] — 2026-10-27
 
 - All user-facing messages are in English. The post-creation verification

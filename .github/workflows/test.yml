@@ -34,6 +34,9 @@ jobs:
       - name: Validate presets
         run: ./scripts/validate-presets.sh
 
+      - name: Validate ISO catalog
+        run: ./scripts/validate-catalog.sh
+
       - name: Test suite
         shell: bash
         run: |

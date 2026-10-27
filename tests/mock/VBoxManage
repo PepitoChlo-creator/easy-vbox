@@ -22,7 +22,7 @@ STATE="${MOCK_STATE:?MOCK_STATE must be set}"
 LOG="${MOCK_LOG:-$STATE/calls.log}"
 FOLDER="$STATE/VirtualBox VMs"
 mkdir -p "$STATE" "$FOLDER" "$STATE/forwarding" "$STATE/started" \
-         "$STATE/cfg" "$STATE/ctrl" "$STATE/attach" "$STATE/shares"
+         "$STATE/cfg" "$STATE/ctrl" "$STATE/attach" "$STATE/shares" "$STATE/unattended"
 
 line="$(printf '%s ' "$@")"
 line="${line% }"
@@ -336,6 +336,23 @@ case "$cmd" in
 
   modifynvram|setextradata|controlvm)
     :
+    ;;
+
+  unattended)
+    sub="${1:-}"
+    name="${2:-}"
+    if [[ "$sub" != "install" ]]; then
+      printf 'VBoxManage: error: unsupported unattended subcommand %s\n' "$sub" >&2
+      exit 127
+    fi
+    if ! is_registered "$name"; then
+      printf 'VBoxManage: error: Could not find a registered machine named %s\n' "$name" >&2
+      exit 1
+    fi
+    shift 2
+    # One argument per line: easy to assert on while keeping values intact.
+    printf '%s\n' "$@" >"$STATE/unattended/$name.args"
+    printf 'Unattended installation prepared for "%s"\n' "$name"
     ;;
 
   unregistervm)

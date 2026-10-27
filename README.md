@@ -9,7 +9,7 @@
 ![bash](https://img.shields.io/badge/bash-3.2%2B-4EAA25)
 
 ```bash
-./scripts/create-vm.sh --iso ~/Downloads/ubuntu-24.04.iso --preset dev
+./scripts/create-vm.sh --download ubuntu-24.04-desktop --preset dev --unattended
 ```
 
 Tired of the VirtualBox wizard? Forgetting TPM for Windows 11? Getting a SATA
@@ -38,6 +38,8 @@ EasyVbox wraps all of it with:
 - **A dry-run plan you can read and paste**
 - **Post-creation verification** — reads the VM back from VirtualBox and tells
   you if any setting was silently ignored
+- **ISO downloads** — right image, verified, cached, no browser
+- **Unattended installs** — no clicks inside the guest either
 
 ---
 
@@ -56,8 +58,8 @@ cd easy-vbox
 No git? Download the release tarball and use it directly:
 
 ```bash
-curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.0.1.tar.gz
-tar xzf easy-vbox-3.0.1.tar.gz && cd easy-vbox-3.0.1
+curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.1.0.tar.gz
+tar xzf easy-vbox-3.1.0.tar.gz && cd easy-vbox-3.1.0
 ./scripts/create-vm.sh --list-presets
 ```
 
@@ -77,7 +79,7 @@ Interactive mode (no arguments) asks for the ISO and the preset:
 
 ```text
 $ ./scripts/create-vm.sh --iso ubuntu-24.04.iso --preset fullstack --dry-run
-# EasyVbox v3.0.1 — dry run plan (nothing will be changed)
+# EasyVbox v3.1.0 — dry run plan (nothing will be changed)
 # preset: fullstack
 # vm: ubuntu-24.04 | iso: /home/you/ubuntu-24.04.iso | ram: 12288 MiB | cpus: 6
 VBoxManage createvm --name ubuntu-24.04 --ostype Ubuntu_64 --register --basefolder '/home/you/VirtualBox VMs'
@@ -178,6 +180,37 @@ The check is advisory (a warning never undoes a created VM) and can be skipped
 with `--no-verify`. Fields a given VirtualBox version does not report are shown
 as `·` instead of being counted as failures.
 
+**It fetches the installer for you.** `--download NAME` resolves the current
+upstream file from a catalog of official locations, verifies its SHA-256 and
+caches it in `~/.easyvbox/isos`, so the second VM is free:
+
+```bash
+./scripts/create-vm.sh --list-isos
+./scripts/create-vm.sh --download debian-12-netinst --preset server
+./scripts/create-vm.sh --download https://example.org/custom.iso
+```
+
+**Zero clicks inside the guest too.** `--unattended` hands the installer to
+VirtualBox's own answer-file machinery — `autounattend.xml` for Windows,
+preseed/kickstart for Linux — so language, keyboard, timezone and user are
+answered for you:
+
+```bash
+./scripts/create-vm.sh --download ubuntu-24.04-server --preset server \
+  --unattended --user dev --hostname lab --with-docker
+```
+
+A password is generated and shown **once** at the end if you do not pass one,
+and it never reaches the log (it is redacted as `***`).
+
+**And it can finish the job.** `--provision setup.sh` inlines your script into
+the guest's post-install hook, and `--with-docker` is the one-liner version:
+
+```bash
+./scripts/create-vm.sh --download kali-latest --preset kali \
+  --unattended --provision ~/dotfiles/bootstrap.sh
+```
+
 **Safe by construction.** `--dry-run` changes nothing (not even a folder),
 `--print-config` shows the resolved values, `--name` collisions are refused,
 and `--replace` demands confirmation before deleting anything.
@@ -188,10 +221,10 @@ and `--replace` demands confirmation before deleting anything.
 
 | Component | Notes |
 |---|---|
-| VirtualBox | 6.1+; **7.0+** for TPM 2.0 and Secure Boot |
+| VirtualBox | 6.1+ (unattended installs); **7.0+** for TPM 2.0 and Secure Boot |
 | Operating system | Linux and macOS. Windows via Git Bash works for the CLI, but nested virtualization is not available; run the VM from the Windows host |
 | Shell | bash 3.2+ (macOS default bash works) |
-| Dependencies | none for VM creation; `jq` **or** `python3` only for `validate-presets.sh` |
+| Dependencies | none for VM creation; `curl` or `wget` for `--download`; `jq` **or** `python3` only for `validate-presets.sh` |
 | Extension Pack | optional; needed for USB 2.0/3.0 passthrough |
 
 Apple Silicon macs can only run ARM guests and VirtualBox support there is
@@ -214,7 +247,10 @@ limited; x86 ISO images will not boot.
 --forward http:8080:80  Extra port forward (repeatable)
 --shared-folder SPEC    [name=]PATH[:ro]
 --headless | --no-start | --gui
---dry-run | --print-config | --list-presets | --no-verify
+--download NAME | --list-isos | --iso-cache DIR
+--unattended --user NAME --password PASS --hostname NAME
+--provision FILE | --with-docker
+--dry-run | --print-config | --list-presets | --list-isos | --no-verify
 ```
 
 Full reference, examples and environment variables:
@@ -228,7 +264,7 @@ No VirtualBox needed — the suite drives a fake `VBoxManage` and checks the exa
 command sequence:
 
 ```bash
-./tests/run-tests.sh          # 50 tests
+./tests/run-tests.sh          # 69 tests
 ./tests/run-tests.sh -v       # show every VBoxManage call
 ./scripts/validate-presets.sh # schema + docs coverage of all presets
 make test                     # both of the above + shellcheck, if installed
@@ -240,6 +276,7 @@ make test                     # both of the above + shellcheck, if installed
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — installing VirtualBox and the Extension Pack
 - [`docs/PRESETS.md`](docs/PRESETS.md) — every preset, the JSON schema, adding your own
+- [`docs/ISOS.md`](docs/ISOS.md) — ISO catalog, downloads, cache and verification
 - [`docs/ADVANCED.md`](docs/ADVANCED.md) — full flag reference and recipes
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — when VirtualBox says no
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed in each version

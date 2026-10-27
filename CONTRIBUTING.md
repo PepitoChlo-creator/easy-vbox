@@ -13,7 +13,7 @@ make test
 ```
 
 `make test` runs syntax checks, ShellCheck (if installed), preset validation
-and the 50-test suite. Everything must be green before opening a pull request.
+and the 69-test suite. Everything must be green before opening a pull request.
 
 ## Adding a preset
 
@@ -45,6 +45,19 @@ and the 50-test suite. Everything must be green before opening a pull request.
 - `secure_boot: "on"` requires `firmware: "efi"` and `tpm: "2.0"`.
 - Do not put absolute host paths in `shared_folder`; that is for users.
 
+## Adding an ISO catalog entry
+
+`isos/catalog.tsv` maps a friendly name to an official download. Prefer the
+checksum-list mode (a `SHA256SUMS` URL plus a wildcard pattern) so point
+releases keep working, and run:
+
+```bash
+./scripts/validate-catalog.sh
+```
+
+Do not hard-code Windows evaluation links: they expire. Details in
+[`docs/ISOS.md`](docs/ISOS.md).
+
 ## Working on the scripts
 
 - Bash 3.2 compatibility is required (macOS ships bash 3.2). No associative
@@ -65,6 +78,9 @@ and the 50-test suite. Everything must be green before opening a pull request.
   assert the resulting configuration and not only the command sequence. Use
   `MOCK_IGNORE="key=value"` to simulate a build that silently ignores a
   setting.
+- Network code must go through `EASYVBOX_DOWNLOADER`. Tests use
+  `tests/mock/fake-downloader` with a URL-to-file mapping, so the suite never
+  touches the network.
 - Write user-facing messages to **stderr** and machine-readable output
   (`--print-config`, dry-run plan, listings) to **stdout**.
 
