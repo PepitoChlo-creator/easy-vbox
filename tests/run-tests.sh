@@ -85,7 +85,7 @@ assert_not_contains() {
 assert_file()      { [[ -f "$1" ]] || fail "expected file to exist: $1"; }
 assert_no_file()   { [[ ! -e "$1" ]] || fail "expected path NOT to exist: $1"; }
 assert_log()       { grep -qF -- "$1" "$MOCK_LOG" || fail "mock log should contain: $1"; }
-assert_no_log()    { grep -qF -- "$1" "$MOCK_LOG" && fail "mock log should NOT contain: $1" || true; }
+assert_no_log()    { if grep -qF -- "$1" "$MOCK_LOG"; then fail "mock log should NOT contain: $1"; fi; }
 assert_log_line()  { grep -qxF -- "$1" "$MOCK_LOG" || fail "mock log should have line: $1"; }
 
 run_test() {

@@ -35,7 +35,19 @@ jobs:
         run: ./scripts/validate-presets.sh
 
       - name: Test suite
-        run: ./tests/run-tests.sh
+        shell: bash
+        run: |
+          set +e
+          ./tests/run-tests.sh > tests.log 2>&1
+          rc=$?
+          cat tests.log
+          if [ "$rc" -ne 0 ]; then
+            # Surface the failure in the check run annotations as well.
+            grep -E '^✗|^  ✗|^Failed:|^  - ' tests.log | head -n 8 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+          exit "$rc"
 
       - name: Dry run without VirtualBox
         run: ./scripts/create-vm.sh --iso none --preset dev --dry-run

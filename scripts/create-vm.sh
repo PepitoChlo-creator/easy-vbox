@@ -43,7 +43,10 @@ log_init() {
   mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
   : >"$LOG_FILE" 2>/dev/null || LOG_FILE="/dev/null"
 }
-log() { [[ -n "$LOG_FILE" ]] && printf '[%s] %s\n' "$(date '+%F %T')" "$*" >>"$LOG_FILE" 2>/dev/null || true; }
+log() {
+  [[ -n "$LOG_FILE" ]] || return 0
+  printf '[%s] %s\n' "$(date '+%F %T')" "$*" >>"$LOG_FILE" 2>/dev/null || true
+}
 
 render_cmd() { local out="" a; for a in "$@"; do out+="$(printf '%q' "$a") "; done; printf '%s' "${out% }"; }
 
@@ -188,9 +191,9 @@ load_vbox_environment() {
 
   local props
   props="$("$VBOX_BIN" list systemproperties --machinereadable 2>/dev/null || true)"
-  DEFAULT_MACHINE_FOLDER="$(printf '%s\n' "$props" | sed -n 's/^defaultMachineFolder="\(.*\)"$/\1/p' | head -n1)"
+  DEFAULT_MACHINE_FOLDER="$(printf '%s\n' "$props" | sed -n 's/^defaultMachineFolder="\(.*\)"$/\1/p')"
   if [[ -z "$DEFAULT_MACHINE_FOLDER" ]]; then
-    DEFAULT_MACHINE_FOLDER="$(printf '%s\n' "$props" | sed -n 's/^Default machine folder:[[:space:]]*//p' | head -n1)"
+    DEFAULT_MACHINE_FOLDER="$(printf '%s\n' "$props" | sed -n 's/^Default machine folder:[[:space:]]*//p')"
   fi
   [[ -n "$DEFAULT_MACHINE_FOLDER" ]] || DEFAULT_MACHINE_FOLDER="$HOME/VirtualBox VMs"
 
@@ -642,7 +645,7 @@ resolve_hostonly_adapter() {
   [[ "$NETWORK_TYPE" == "hostonly" ]] || return 0
   [[ -n "$HOSTONLY_ADAPTER" ]] && return 0
   [[ -n "$VBOX_BIN" ]] || { HOSTONLY_ADAPTER="vboxnet0"; return 0; }
-  HOSTONLY_ADAPTER="$("$VBOX_BIN" list hostonlyifs 2>/dev/null | sed -n 's/^Name:[[:space:]]*//p' | head -n1)"
+  HOSTONLY_ADAPTER="$("$VBOX_BIN" list hostonlyifs 2>/dev/null | sed -n 's/^Name:[[:space:]]*//p' | sed -n '1p')"
   [[ -n "$HOSTONLY_ADAPTER" ]] || die "No host-only interface found. Create one: VBoxManage hostonlyif create"
 }
 
@@ -902,7 +905,7 @@ create_vm() {
   vm_dir="$ACTIVE_MACHINE_FOLDER/$VM_NAME"
   if ! $DRY_RUN && [[ -n "$VBOX_BIN" ]]; then
     local cfg
-    cfg="$("$VBOX_BIN" showvminfo "$VM_NAME" --machinereadable 2>/dev/null | sed -n 's/^CfgFile="\(.*\)"$/\1/p' | head -n1)"
+    cfg="$("$VBOX_BIN" showvminfo "$VM_NAME" --machinereadable 2>/dev/null | sed -n 's/^CfgFile="\(.*\)"$/\1/p')"
     [[ -n "$cfg" ]] && vm_dir="$(dirname "$cfg")"
   fi
 
