@@ -13,7 +13,7 @@ make test
 ```
 
 `make test` runs syntax checks, ShellCheck (if installed), preset validation
-and the 44-test suite. Everything must be green before opening a pull request.
+and the 50-test suite. Everything must be green before opening a pull request.
 
 ## Adding a preset
 
@@ -61,6 +61,10 @@ and the 44-test suite. Everything must be green before opening a pull request.
 
 - New behaviour needs a test in `tests/run-tests.sh`. Use the fake `VBoxManage`
   in `tests/mock/` — tests must never require a real hypervisor.
+- The mock stores settings and renders them through `showvminfo`, so tests can
+  assert the resulting configuration and not only the command sequence. Use
+  `MOCK_IGNORE="key=value"` to simulate a build that silently ignores a
+  setting.
 - Write user-facing messages to **stderr** and machine-readable output
   (`--print-config`, dry-run plan, listings) to **stdout**.
 

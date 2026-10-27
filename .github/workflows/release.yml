@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check that the tag matches the script version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          script_version="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' scripts/create-vm.sh | head -n1)"
+          echo "tag=$tag_version script=$script_version"
+          if [ "$tag_version" != "$script_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match VERSION=$script_version in create-vm.sh"
+            exit 1
+          fi
+
+      - name: Run the test suite before shipping
+        run: ./tests/run-tests.sh
+
+      - name: Build the tarball
+        run: |
+          name="easy-vbox-${GITHUB_REF_NAME#v}"
+          mkdir -p "dist/$name"
+          cp -R README.md CHANGELOG.md CONTRIBUTING.md LICENSE Makefile docs presets scripts tests "dist/$name/"
+          find "dist/$name" -name '*.sh' -o -name 'VBoxManage' -o -name 'run-tests.sh' | xargs chmod +x
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
+          cat "dist/$name.tar.gz.sha256"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "EasyVbox ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            "dist/easy-vbox-${GITHUB_REF_NAME#v}.tar.gz" \
+            "dist/easy-vbox-${GITHUB_REF_NAME#v}.tar.gz.sha256"

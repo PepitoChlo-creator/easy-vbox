@@ -491,6 +491,64 @@ test_print_config_without_vbox_windows11() {
   assert_contains "config" "secure_boot=on" "$OUT"
 }
 
+test_verify_reports_applied_config() {
+  use_mock
+  run_cli --iso "$ISO" --preset dev --name verifyvm
+  assert_rc 0
+  assert_contains "verify" "Verifying the VM configuration" "$ERR"
+  assert_contains "verify" "memoria (MiB): 8192" "$ERR"
+  assert_contains "verify" "controladora NVMe presente" "$ERR"
+  assert_contains "verify" "SSH reenviado en el puerto 2222" "$ERR"
+  assert_contains "verify" "Verificación correcta" "$ERR"
+  assert_not_contains "verify" "se esperaba" "$ERR"
+}
+
+test_verify_detects_ignored_setting() {
+  use_mock
+  # A VirtualBox build that accepts --cpus but does not apply it.
+  export MOCK_IGNORE="cpus=1"
+  run_cli --iso "$ISO" --preset dev --name ignoredvm
+  assert_rc 0
+  assert_contains "verify" "se esperaba '4'" "$ERR"
+  assert_contains "verify" "Verificación con avisos" "$ERR"
+  assert_contains "verify" "--no-verify" "$ERR"
+}
+
+test_verify_detects_missing_tpm() {
+  use_mock
+  export MOCK_IGNORE="tpm-type=none"
+  run_cli --iso "$WIN_ISO" --preset windows11 --name notpmvm
+  assert_rc 0
+  assert_contains "verify" "TPM" "$ERR"
+  assert_contains "verify" "Verificación con avisos" "$ERR"
+}
+
+test_no_verify_flag() {
+  use_mock
+  run_cli --iso "$ISO" --preset dev --name noverifyvm --no-verify
+  assert_rc 0
+  assert_not_contains "verify" "Verifying the VM configuration" "$ERR"
+  assert_not_contains "verify" "Verificación" "$ERR"
+}
+
+test_verify_skipped_in_dry_run() {
+  use_mock
+  run_cli --iso "$ISO" --preset dev --dry-run
+  assert_rc 0
+  assert_not_contains "verify" "Verifying" "$ERR"
+  assert_no_log "showvminfo"
+}
+
+test_verify_checks_shared_folder_and_iso() {
+  use_mock
+  run_cli --iso "$ISO" --preset desktop --name shareverify \
+    --shared-folder "code=$TEST_TMP/project"
+  assert_rc 0
+  assert_contains "verify" "ISO conectada" "$ERR"
+  assert_contains "verify" "carpeta compartida 'code' registrada" "$ERR"
+  assert_contains "verify" "Verificación correcta" "$ERR"
+}
+
 test_log_file() {
   use_mock
   local logf="$TEST_TMP/custom.log"
@@ -562,6 +620,12 @@ ALL_TESTS=(
   test_partial_failure_gives_cleanup_hint
   test_existing_vm_has_no_cleanup_hint
   test_print_config_without_vbox_windows11
+  test_verify_reports_applied_config
+  test_verify_detects_ignored_setting
+  test_verify_detects_missing_tpm
+  test_no_verify_flag
+  test_verify_skipped_in_dry_run
+  test_verify_checks_shared_folder_and_iso
   test_log_file
   test_validate_presets
 )

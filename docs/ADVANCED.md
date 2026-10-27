@@ -19,6 +19,8 @@ counterparts so a preset can always be overridden.
 | `-y, --yes` | Do not ask for confirmation (used by `--replace`) |
 | `--log-file PATH` | Write the VBoxManage log to `PATH` |
 | `--no-log` | Do not write a log file |
+| `--no-verify` | Skip the post-creation configuration check |
+| `--verify` | Force the check (default) |
 
 ### VM
 
@@ -213,6 +215,37 @@ suite uses a fake `VBoxManage`, so no hypervisor is required either.
 `--replace` refuses to run non-interactively unless you also pass `--yes`, and
 interactively it asks you to type the VM name. It deletes the VM **and its
 disks**.
+
+## Post-creation verification
+
+After the VM is created (and before it starts), EasyVbox reads its
+configuration back with `VBoxManage showvminfo --machinereadable` and compares
+it with what was requested:
+
+| Checked | Notes |
+|---|---|
+| Memory, CPUs, VRAM | Exact values |
+| Firmware, graphics controller, TPM, Secure Boot | Case-insensitive |
+| 3D acceleration, nested virtualization | `on` / `off` |
+| USB controller | Matches the requested mode |
+| Storage controllers | NVMe present when requested, SATA always |
+| Disk and ISO | Attached to the expected controller and port |
+| Boot order | `dvd` when there is an ISO, `disk` otherwise |
+| Port forwards | SSH port and extra forwards |
+| Shared folders | Registered with the expected name |
+
+Each line is `✓` applied, `⚠` accepted but not applied, or `·` not reported by
+this VirtualBox version. The difference matters: an option that a build does
+not report is not a failure, while a reported value that differs is exactly the
+silent-ignore case this check exists to catch.
+
+Verification is **advisory**: a mismatch prints a warning with the log path and
+the VM stays created (it is still usable, and you can fix the setting in the
+GUI). Disable it with `--no-verify`.
+
+```bash
+$ ./scripts/create-vm.sh --iso ubuntu.iso --preset dev --no-verify
+```
 
 ## Logs
 

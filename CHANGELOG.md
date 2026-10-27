@@ -3,15 +3,30 @@
 All notable changes to EasyVbox are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [3.0.0] — 2026-10-27
+## [3.0.0] — 2026-10-27 · released
 
 A full pass over correctness, presets, tests and documentation.
 
+### Verified
+
+- **Post-creation verification**: the VM configuration is read back from
+  `showvminfo --machinereadable` and compared with what was requested (memory,
+  CPU, VRAM, firmware, graphics, 3D, nested virtualization, TPM, Secure Boot,
+  USB, controllers, disk, ISO, boot order, forwards, shared folders). Settings
+  a VirtualBox build silently ignores are reported instead of going unnoticed.
+  Advisory by design; `--no-verify` disables it.
+- Real CI badge in the README instead of a static "tests passing" badge.
+- `release` workflow: pushing a `v*` tag checks that the tag matches `VERSION`,
+  runs the test suite, builds `easy-vbox-<version>.tar.gz` with a SHA-256
+  checksum and publishes the GitHub release. The README documents installing
+  from a release tarball, without git.
+
 ### Added
 
-- **Test suite** (`tests/run-tests.sh`, 44 tests) that drives `create-vm.sh`
+- **Test suite** (`tests/run-tests.sh`, 50 tests) that drives `create-vm.sh`
   against a fake `VBoxManage`, so the whole creation flow is verified in CI
-  without a hypervisor.
+  without a hypervisor. The mock stores the settings it receives and renders
+  them through `showvminfo`, so tests assert the resulting configuration too.
 - **Preset validator** (`scripts/validate-presets.sh`): JSON schema checks,
   value ranges, enum validation, documentation coverage.
 - `--dry-run` now prints a readable, copy-pasteable plan and creates no files,
