@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Fake VBoxManage used by tests/run-tests.sh.
+#
+# It records every invocation in $MOCK_LOG and keeps a little bit of state in
+# $MOCK_STATE so the test suite can verify the exact command sequence that
+# scripts/create-vm.sh produces, without a real VirtualBox installation.
+#
+# Useful environment variables:
+#   MOCK_STATE=DIR          state directory (required)
+#   MOCK_LOG=FILE           where calls are recorded (default: $MOCK_STATE/calls.log)
+#   MOCK_VERSION=7.0.20r1   version reported by --version
+#   MOCK_EXTPACK=1          pretend the Extension Pack is installed
+#   MOCK_BRIDGED=1          report bridged interfaces
+#   MOCK_OSTYPES_LIST="..." comma separated OS type IDs (default: a small real set)
+#   MOCK_FAIL_ON="TEXT"     exit 1 with an error when the command contains TEXT
+set -uo pipefail
+
+STATE="${MOCK_STATE:?MOCK_STATE must be set}"
+LOG="${MOCK_LOG:-$STATE/calls.log}"
+FOLDER="$STATE/VirtualBox VMs"
+mkdir -p "$STATE" "$FOLDER" "$STATE/forwarding" "$STATE/started"
+
+line="$(printf '%s ' "$@")"
+line="${line% }"
+printf '%s\n' "$line" >>"$LOG"
+
+if [[ -n "${MOCK_FAIL_ON:-}" && "$line" == *"$MOCK_FAIL_ON"* ]]; then
+  printf 'VBoxManage: error: mocked failure (matched "%s")\n' "$MOCK_FAIL_ON" >&2
+  exit 1
+fi
+
+vm_uuid() { printf '00000000-0000-0000-0000-%012d' "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"; }
+
+register_vm() { [[ -f "$STATE/vms" ]] || : >"$STATE/vms"; printf '%s\n' "$1" >>"$STATE/vms"; }
+unregister_vm() {
+  [[ -f "$STATE/vms" ]] || return 0
+  grep -vx -- "$1" "$STATE/vms" >"$STATE/vms.tmp" 2>/dev/null || true
+  mv "$STATE/vms.tmp" "$STATE/vms"
+}
+
+cmd="${1:-}"
+(( $# > 0 )) && shift
+
+case "$cmd" in
+  --version)
+    printf '%s\n' "${MOCK_VERSION:-7.0.20r163906}"
+    ;;
+
+  list)
+    sub="${1:-}"
+    case "$sub" in
+      systemproperties)
+        printf 'defaultMachineFolder="%s"\n' "$FOLDER"
+        printf 'Default machine folder:           %s\n' "$FOLDER"
+        ;;
+      vms)
+        if [[ -f "$STATE/vms" ]]; then
+          while IFS= read -r name; do
+            [[ -n "$name" ]] && printf '"%s" {%s}\n' "$name" "$(vm_uuid "$name")"
+          done <"$STATE/vms"
+        fi
+        ;;
+      ostypes)
+        if [[ -n "${MOCK_OSTYPES_LIST:-}" ]]; then
+          IFS=',' read -r -a types <<<"$MOCK_OSTYPES_LIST"
+        else
+          types=(Linux_64 Ubuntu_64 Debian_64 Fedora_64 RedHat_64 ArchLinux_64
+                 openSUSE_64 FreeBSD_64 Windows10_64 Windows11_64 Windows7_64)
+        fi
+        for t in "${types[@]}"; do printf 'ID:          %s\n' "$t"; done
+        ;;
+      extpacks)
+        if [[ "${MOCK_EXTPACK:-0}" == "1" ]]; then
+          printf 'Pack no. 0:   Oracle VM VirtualBox Extension Pack\n'
+          printf 'Version:      %s\n' "${MOCK_VERSION:-7.0.20r163906}"
+        fi
+        ;;
+      bridgedifs)
+        if [[ "${MOCK_BRIDGED:-0}" == "1" ]]; then
+          printf 'Name:        eth0\nStatus:      Up\n'
+          printf 'Name:        eth1\nStatus:      Down\n'
+        fi
+        ;;
+      hostonlyifs)
+        printf 'Name:        vboxnet0\nStatus:      Up\n'
+        ;;
+      *) printf 'VBoxManage: error: unknown list type %s\n' "$sub" >&2; exit 127 ;;
+    esac
+    ;;
+
+  createvm)
+    name=""; folder="$FOLDER"
+    while (( $# > 0 )); do
+      case "$1" in
+        --name) name="$2"; shift 2 ;;
+        --basefolder) folder="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -n "$name" ]] || { printf 'VBoxManage: error: --name is required\n' >&2; exit 1; }
+    mkdir -p "$folder/$name"
+    register_vm "$name"
+    printf "Virtual machine '%s' is created and registered.\n" "$name"
+    ;;
+
+  showvminfo)
+    name="${1:-}"
+    if [[ ! -f "$STATE/vms" ]] || ! grep -qx -- "$name" "$STATE/vms"; then
+      printf 'VBoxManage: error: Could not find a registered machine named %s\n' "$name" >&2
+      exit 1
+    fi
+    printf 'name="%s"\n' "$name"
+    printf 'CfgFile="%s/%s/%s.vbox"\n' "$FOLDER" "$name" "$name"
+    printf 'memorysize="4096"\n'
+    if [[ -f "$STATE/forwarding/$name" ]]; then
+      i=0
+      while IFS= read -r rule; do
+        [[ -n "$rule" ]] || continue
+        printf 'Forwarding(%d)="%s"\n' "$i" "$rule"
+        i=$(( i + 1 ))
+      done <"$STATE/forwarding/$name"
+    fi
+    ;;
+
+  modifyvm|storagectl|sharedfolder|setextradata|modifynvram|controlvm)
+    name=""
+    for a in "$@"; do
+      case "$a" in --*) ;; *) name="$a"; break ;; esac
+    done
+    if [[ "$cmd" == "modifyvm" && "$*" == *"--natpf"* ]]; then
+      vm=""
+      while (( $# > 0 )); do
+        case "$1" in
+          --natpf*) rule="$2"; vm="$name"; printf '%s\n' "$rule" >>"$STATE/forwarding/$vm"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+    fi
+    ;;
+
+  createmedium|createhd)
+    filename=""; size=""
+    while (( $# > 0 )); do
+      case "$1" in
+        --filename|--name) filename="$2"; shift 2 ;;
+        --size) size="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [[ -n "$filename" ]] || { printf 'VBoxManage: error: --filename is required\n' >&2; exit 1; }
+    mkdir -p "$(dirname "$filename")"
+    : >"$filename"
+    printf '0%%...10%%...100%%\n'
+    printf 'Medium created: %s (%s MB)\n' "$filename" "${size:-0}"
+    ;;
+
+  storageattach)
+    medium=""
+    while (( $# > 0 )); do
+      case "$1" in
+        --medium) medium="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ -n "$medium" && ! -e "$medium" ]]; then
+      printf 'VBoxManage: error: Could not open the medium %s\n' "$medium" >&2
+      exit 1
+    fi
+    ;;
+
+  unregistervm)
+    name="${1:-}"
+    if [[ -f "$STATE/vms" ]] && ! grep -qx -- "$name" "$STATE/vms"; then
+      printf 'VBoxManage: error: Could not find a registered machine named %s\n' "$name" >&2
+      exit 1
+    fi
+    if [[ "$*" == *"--delete"* ]]; then
+      rm -rf "${FOLDER:?}/$name"
+    fi
+    unregister_vm "$name"
+    rm -f "$STATE/forwarding/$name"
+    ;;
+
+  startvm)
+    name="${1:-}"
+    mkdir -p "$STATE/started"
+    : >"$STATE/started/$name"
+    printf 'Waiting for VM "%s" to power on...\nVM "%s" has been successfully started.\n' "$name" "$name"
+    ;;
+
+  *)
+    printf 'VBoxManage: error: mock does not implement "%s"\n' "$cmd" >&2
+    exit 127
+    ;;
+esac
+
+exit 0
