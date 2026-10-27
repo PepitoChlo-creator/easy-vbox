@@ -40,12 +40,39 @@ jobs:
           ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
           cat "dist/$name.tar.gz.sha256"
 
+      - name: Build the release notes from the CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Everything between "## [version]" and the next "## [" heading.
+          awk -v ver="$version" '
+            index($0, "## [" ver "]") == 1 { inside = 1; next }
+            inside && index($0, "## [") == 1 { exit }
+            inside { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then
+            echo "notes_source=changelog" >> "$GITHUB_ENV"
+            { printf '## Qué incluye\n'; cat release-notes.md; } >> release-notes.md.tmp
+            mv release-notes.md.tmp release-notes.md
+          else
+            echo "notes_source=generated" >> "$GITHUB_ENV"
+            echo "No CHANGELOG section for $version; GitHub will generate the notes."
+          fi
+          head -20 release-notes.md || true
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "EasyVbox ${GITHUB_REF_NAME}" \
-            --generate-notes \
-            "dist/easy-vbox-${GITHUB_REF_NAME#v}.tar.gz" \
-            "dist/easy-vbox-${GITHUB_REF_NAME#v}.tar.gz.sha256"
+          asset="dist/easy-vbox-${GITHUB_REF_NAME#v}.tar.gz"
+          checksum="$asset.sha256"
+          if [ "$notes_source" = "changelog" ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "EasyVbox ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md \
+              "$asset" "$checksum"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "EasyVbox ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              "$asset" "$checksum"
+          fi
