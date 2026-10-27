@@ -3,7 +3,15 @@
 All notable changes to EasyVbox are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [3.0.0] — 2026-10-27 · released
+## [3.0.1] — 2026-10-27
+
+- All user-facing messages are in English. The post-creation verification
+  (added in 3.0.0) printed its labels in Spanish; the rest of the project was
+  already English.
+- The release workflow takes the release body from this changelog, so release
+  notes stay in sync with the code.
+
+## [3.0.0] — 2026-10-27
 
 A full pass over correctness, presets, tests and documentation.
 

@@ -56,8 +56,8 @@ cd easy-vbox
 No git? Download the release tarball and use it directly:
 
 ```bash
-curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.0.0.tar.gz
-tar xzf easy-vbox-3.0.0.tar.gz && cd easy-vbox-3.0.0
+curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.0.1.tar.gz
+tar xzf easy-vbox-3.0.1.tar.gz && cd easy-vbox-3.0.1
 ./scripts/create-vm.sh --list-presets
 ```
 
@@ -77,7 +77,7 @@ Interactive mode (no arguments) asks for the ISO and the preset:
 
 ```text
 $ ./scripts/create-vm.sh --iso ubuntu-24.04.iso --preset fullstack --dry-run
-# EasyVbox v3.0.0 — dry run plan (nothing will be changed)
+# EasyVbox v3.0.1 — dry run plan (nothing will be changed)
 # preset: fullstack
 # vm: ubuntu-24.04 | iso: /home/you/ubuntu-24.04.iso | ram: 12288 MiB | cpus: 6
 VBoxManage createvm --name ubuntu-24.04 --ostype Ubuntu_64 --register --basefolder '/home/you/VirtualBox VMs'
@@ -166,12 +166,12 @@ at boot:
 
 ```text
 ▶ Verifying the VM configuration
-   ✓ memoria (MiB): 8192
-   ⚠ CPUs: se esperaba '4' y se obtuvo '1'
-   ✓ controladora NVMe presente
-   ✓ ISO conectada: ubuntu-24.04.iso
-   ✓ SSH reenviado en el puerto 2222
-⚠ Verificación con avisos: 1 ajuste(s) no aplicados, 13 correctos
+   ✓ memory (MiB): 8192
+   ⚠ CPUs: expected '4', got '1'
+   ✓ NVMe controller present
+   ✓ ISO attached: ubuntu-24.04.iso
+   ✓ SSH forwarded on host port 2222
+⚠ Verification with warnings: 1 setting(s) not applied, 13 correct
 ```
 
 The check is advisory (a warning never undoes a created VM) and can be skipped
@@ -242,7 +242,7 @@ make test                     # both of the above + shellcheck, if installed
 - [`docs/PRESETS.md`](docs/PRESETS.md) — every preset, the JSON schema, adding your own
 - [`docs/ADVANCED.md`](docs/ADVANCED.md) — full flag reference and recipes
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — when VirtualBox says no
-- [`CHANGELOG.md`](CHANGELOG.md) — what changed in v3.0.0
+- [`CHANGELOG.md`](CHANGELOG.md) — what changed in each version
 
 ---
 
