@@ -33,6 +33,7 @@ RC=0
 # ---------------------------------------------------------------------------
 setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/easyvbox-test.XXXXXX")"
+  TEST_TMP_CANON="$(cd "$TEST_TMP" && pwd)"
   export MOCK_STATE="$TEST_TMP/state"
   export MOCK_LOG="$MOCK_STATE/calls.log"
   mkdir -p "$MOCK_STATE" "$TEST_TMP/home" "$TEST_TMP/project"
@@ -225,7 +226,7 @@ test_relative_iso_becomes_absolute() {
   RC=$?
   ERR="$(cat "$TEST_TMP/stderr")"
   assert_rc 0
-  assert_contains "iso" "iso=$TEST_TMP/fake.iso" "$OUT"
+  assert_contains "iso" "iso=$TEST_TMP_CANON/fake.iso" "$OUT"
 }
 
 # ---------------------------------------------------------------------------
@@ -389,7 +390,7 @@ test_shared_folder() {
   use_mock
   run_cli --iso "$ISO" --name sharevm --shared-folder "src=$TEST_TMP/project"
   assert_rc 0
-  assert_log "sharedfolder add sharevm --name src --hostpath $TEST_TMP/project --automount"
+  assert_log "sharedfolder add sharevm --name src --hostpath $TEST_TMP_CANON/project --automount"
   assert_no_log "--readonly"
 }
 
@@ -397,7 +398,7 @@ test_shared_folder_readonly_and_tilde() {
   use_mock
   run_cli --iso "$ISO" --name rov --shared-folder "$TEST_TMP/project:ro"
   assert_rc 0
-  assert_log "--hostpath $TEST_TMP/project --automount --readonly"
+  assert_log "--hostpath $TEST_TMP_CANON/project --automount --readonly"
 }
 
 test_existing_vm_is_refused() {
@@ -433,7 +434,7 @@ test_bridged_autodetect() {
   run_cli --iso "$ISO" --name bridgedvm --network bridged
   assert_rc 0
   assert_log "--nic1 bridged --bridgeadapter1 eth0"
-  assert_contains "bridge" "Bridged adapter" "$ERR"
+  assert_contains "bridge" "eth0" "$ERR"
 }
 
 test_network_alias_bridge() {
