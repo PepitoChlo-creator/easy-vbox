@@ -14,6 +14,8 @@ counterparts so a preset can always be overridden.
 | `-h, --help` | Print help and exit |
 | `-V, --version` | Print version and exit |
 | `--list-presets` | List presets with specs and descriptions |
+| `--list-vms` | List the VMs registered with VirtualBox |
+| `--delete-vm NAME` | Unregister `NAME` and delete its disks |
 | `--print-config` | Resolve preset + flags and print `key=value` lines |
 | `-n, --dry-run` | Print the VBoxManage plan; modifies nothing |
 | `-y, --yes` | Do not ask for confirmation (used by `--replace`) |
@@ -39,7 +41,7 @@ counterparts so a preset can always be overridden.
 | `--graphics TYPE` | `vmsvga` (default), `vboxsvga` or `none` |
 | `--firmware TYPE` | `efi` (default) or `bios` |
 | `--nested`, `--no-nested` | Expose VT-x/AMD-V to the guest |
-| `--usb MODE` | `off`, `ohci` (default), `ehci`, `xhci` |
+| `--usb MODE` | `off`, `ohci`, `ehci`, `xhci` (default on VirtualBox 7+, `ohci` before) |
 | `--tpm TYPE` | `none` (default) or `2.0` |
 | `--secure-boot on\|off` | UEFI Secure Boot (needs EFI, VirtualBox 7+) |
 | `--machine-folder PATH` | Where the VM lives (default: VirtualBox's own default folder) |
@@ -237,6 +239,31 @@ suite uses a fake `VBoxManage`, so no hypervisor is required either.
 `--replace` refuses to run non-interactively unless you also pass `--yes`, and
 interactively it asks you to type the VM name. It deletes the VM **and its
 disks**.
+
+## Managing existing VMs
+
+Two commands work on the VMs that are already registered, so you never have to
+drop down to raw `VBoxManage` to see or remove one:
+
+```bash
+./scripts/create-vm.sh --list-vms
+# NAME                         STATE       UUID
+# ubuntu-24.04                 running     4f1c…-…
+# debian-12                    powered off  9a02…-…
+
+./scripts/create-vm.sh --delete-vm debian-12
+```
+
+`--delete-vm` refuses to touch a VM that is running (shut it down first), asks
+you to type the VM name, and removes the registration **and the disks** — the
+same destructive scope as `--replace`. Non-interactively it needs `--yes`:
+
+```bash
+./scripts/create-vm.sh --delete-vm debian-12 --yes
+./scripts/create-vm.sh --delete-vm debian-12 --dry-run   # show, do not delete
+```
+
+Neither command needs `--iso` or `--preset`. `make vms` lists from the Makefile.
 
 ## Downloading the installer
 

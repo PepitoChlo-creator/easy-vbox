@@ -3,6 +3,43 @@
 All notable changes to EasyVbox are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [3.2.0] — 2026-10-30
+
+Bug-fix release for the packaging path, plus the two commands that were missing
+to manage VMs after they exist.
+
+### Added
+
+- **`--list-vms`**: lists every VM VirtualBox has registered, with its state and
+  UUID, in one call.
+- **`--delete-vm NAME`**: unregisters a VM and deletes its disks. It refuses to
+  touch a running VM, asks you to type the name, needs `--yes` when
+  non-interactive and honours `--dry-run`.
+- `make vms` and `make payload`.
+- 13 new tests (82 total).
+
+### Fixed
+
+- **Release tarballs were missing `isos/`**, so `--download` and `--list-isos`
+  failed on every artifact published from the repository — including the 3.1.0
+  tarball. The payload now comes from `scripts/release-payload.sh`, a single
+  list that CI and the test suite both check.
+- **`install.sh` reported the wrong version** (`3.0.0`). It now reads the
+  version from `create-vm.sh` instead of keeping a copy that can drift.
+- **USB was degraded to 1.1 for no reason on VirtualBox 7+**: EHCI and xHCI
+  moved into the open-source base package in 7.0, so the Extension Pack is no
+  longer required. The fallback now applies to 6.x only, and the default is
+  `xhci` on 7+ (OHCI has known regressions since 7.0.16).
+
+### Changed
+
+- The release workflow unpacks the tarball and runs `--version`,
+  `--list-presets`, `--list-isos`, a dry run and the full test suite before
+  publishing it.
+- CI runs on `actions/checkout@v7`, cancels superseded runs, keeps read-only
+  permissions and verifies the release payload.
+- The README no longer hardcodes a test count.
+
 ## [3.1.0] — 2026-10-27
 
 Three features that remove the remaining manual steps around a VM.

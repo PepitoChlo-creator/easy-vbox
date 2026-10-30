@@ -1,8 +1,9 @@
 SHELL := /bin/bash
-SCRIPTS := scripts/create-vm.sh scripts/install.sh scripts/install-guest-additions.sh scripts/validate-presets.sh
+SCRIPTS := scripts/create-vm.sh scripts/install.sh scripts/install-guest-additions.sh \
+           scripts/validate-presets.sh scripts/validate-catalog.sh scripts/release-payload.sh
 TEST_FILES := tests/run-tests.sh tests/mock/VBoxManage
 
-.PHONY: help test lint syntax presets catalog dry-run list
+.PHONY: help test lint syntax presets catalog payload dry-run list vms
 
 help: ## Show this help
 	@printf 'EasyVbox — make targets\n\n'
@@ -28,6 +29,9 @@ presets: ## Validate all presets and their documentation
 catalog: ## Validate the ISO download catalog
 	./scripts/validate-catalog.sh
 
+payload: ## Check that every file a release ships exists
+	./scripts/release-payload.sh > /dev/null && echo "release payload: complete"
+
 dry-run: ## Print a plan without touching anything
 	./scripts/create-vm.sh --iso none --preset minimal-testing --dry-run
 
@@ -36,3 +40,6 @@ isos: ## List the images available to --download
 
 list: ## List the available presets
 	./scripts/create-vm.sh --list-presets
+
+vms: ## List the VMs registered with VirtualBox
+	./scripts/create-vm.sh --list-vms

@@ -8,7 +8,7 @@
 # This script is intentionally a single file so it can be copied standalone.
 set -euo pipefail
 
-VERSION="3.1.0"
+VERSION="3.2.0"
 PROG="easy-vbox"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRESETS_DIR="${EASYVBOX_PRESETS_DIR:-$SCRIPT_DIR/../presets}"
@@ -131,6 +131,7 @@ UNATTENDED=false GUEST_USER="" GUEST_PASSWORD="" GUEST_PASSWORD_GENERATED=false
 GUEST_HOSTNAME="" GUEST_LOCALE="" GUEST_COUNTRY="" GUEST_TIMEZONE=""
 INSTALL_ADDITIONS="" PROVISION_SCRIPTS="" WITH_DOCKER=false GA_ISO=""
 REPLACE=false PRINT_CONFIG=false OSTYPE_OVERRIDE="" OSTYPE_WANTED="" ACTIVE_MACHINE_FOLDER=""
+LIST_VMS=false DELETE_VM=""
 
 VM_REGISTERED_BY_US=false
 CREATED_OK=false
@@ -283,6 +284,75 @@ vm_exists() {
 list_vm_names() {
   [[ -n "$VBOX_BIN" ]] || return 0
   "$VBOX_BIN" list vms 2>/dev/null | sed -n 's/^"\(.*\)" {[^}]*}$/\1/p'
+}
+
+running_vm_names() {
+  [[ -n "$VBOX_BIN" ]] || return 0
+  "$VBOX_BIN" list runningvms 2>/dev/null | sed -n 's/^"\(.*\)" {[^}]*}$/\1/p'
+}
+
+vm_is_running() {
+  local wanted="$1" name
+  [[ -n "$VBOX_BIN" ]] || return 1
+  while IFS= read -r name; do
+    [[ "$name" == "$wanted" ]] && return 0
+  done < <(running_vm_names)
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Managing VMs that already exist
+#
+# Creating ten VMs with EasyVbox is easy; finding out what is registered, and
+# getting rid of one, should be just as easy. These two commands are read-only
+# or destructive, so they run before the ISO/preset flow and never touch it.
+# ---------------------------------------------------------------------------
+require_vbox() {
+  [[ -n "$VBOX_BIN" ]] || die "VirtualBox is not installed or VBoxManage is not in PATH. See docs/INSTALL.md"
+}
+
+list_vms() {
+  require_vbox
+  local entries name uuid state running
+  entries="$("$VBOX_BIN" list vms 2>/dev/null | sed -n 's/^"\(.*\)" {\([^}]*\)}$/\1|\2/p')"
+  if [[ -z "$entries" ]]; then
+    info "No VirtualBox VMs are registered on this host"
+    printf 'Create one with: %s --iso IMAGE.iso --preset dev\n' "$PROG"
+    return 0
+  fi
+  running="$(running_vm_names)"
+  printf '%-28s %-11s %s\n' "NAME" "STATE" "UUID"
+  while IFS='|' read -r name uuid; do
+    [[ -n "$name" ]] || continue
+    state="powered off"
+    if printf '%s\n' "$running" | grep -qxF -- "$name"; then state="running"; fi
+    printf '%-28s %-11s %s\n' "$name" "$state" "$uuid"
+  done <<<"$entries"
+  printf '\nRemove one with: %s --delete-vm NAME\n' "$PROG"
+}
+
+delete_vm() {
+  local name="$1" answer
+  [[ -n "$name" ]] || die_usage "--delete-vm needs a VM name"
+  require_vbox
+  vm_exists "$name" || die "No VM named '$name' is registered (see --list-vms)"
+  if vm_is_running "$name"; then
+    die "VM '$name' is running. Shut it down first: VBoxManage controlvm '$name' acpipowerbutton"
+  fi
+  if $DRY_RUN; then
+    printf '# EasyVbox v%s — dry run plan (nothing will be changed)\n' "$VERSION"
+    vbox unregistervm "$name" --delete
+    return 0
+  fi
+  if ! $ASSUME_YES; then
+    [[ -t 0 ]] || die "Refusing to delete '$name' without confirmation; pass --yes"
+    warn "This will DELETE the VM '$name' and all its disks."
+    read -rp "Type the VM name to confirm deletion: " answer
+    [[ "$answer" == "$name" ]] || die "Confirmation failed; nothing was changed"
+  fi
+  info "Deleting VM '$name'"
+  vbox unregistervm "$name" --delete || die "Could not delete VM '$name'"
+  success "VM '$name' deleted"
 }
 
 used_host_ports() {
@@ -581,11 +651,14 @@ USAGE
   $PROG --iso IMAGE.iso [--preset NAME] [OPTIONS]
   $PROG --list-presets
   $PROG --iso ubuntu.iso --preset dev --dry-run
+  $PROG --list-vms | --delete-vm NAME
 
 GENERAL
   -h, --help                Show this help and exit
   -V, --version             Show version and exit
       --list-presets        List available presets and exit
+      --list-vms            List the VMs VirtualBox has registered, and exit
+      --delete-vm NAME      Unregister NAME and delete its disks (asks first)
       --print-config        Show the resolved configuration and exit
   -n, --dry-run             Print the VBoxManage plan, change nothing
   -y, --yes                 Assume yes for confirmation prompts
@@ -654,6 +727,8 @@ EXAMPLES
   $PROG --iso debian.iso --preset server --headless --ssh-port 2200
   $PROG --download ubuntu-24.04-server --preset server --unattended --user dev --with-docker
   $PROG --download kali-latest --preset kali --unattended --provision setup.sh
+  $PROG --list-vms
+  $PROG --delete-vm ubuntu-24.04 --yes
 
 Exit codes: 0 success, 1 runtime failure, 2 usage error.
 EOF
@@ -687,6 +762,7 @@ parse_args() {
       --no-verify)     VERIFY=false; shift ;;
       --verify)        VERIFY=true; shift ;;
       --list-isos)     list_isos; exit 0 ;;
+      --list-vms)      LIST_VMS=true; shift ;;
       --unattended)    UNATTENDED=true; shift ;;
       --with-docker)   WITH_DOCKER=true; shift ;;
       --install-additions)    INSTALL_ADDITIONS=true; shift ;;
@@ -727,11 +803,12 @@ parse_args() {
           --country) GUEST_COUNTRY="$val" ;;
           --timezone) GUEST_TIMEZONE="$val" ;;
           --provision) PROVISION_SCRIPTS="${PROVISION_SCRIPTS}${PROVISION_SCRIPTS:+,}$val" ;;
+          --delete-vm) DELETE_VM="$val" ;;
           *) die_usage "Unknown option: $key" ;;
         esac
         shift
         ;;
-      --iso|--name|--preset|--ostype|--ram|--cpus|--disk|--vram|--graphics|--firmware|--usb|--tpm|--secure-boot|--machine-folder|--network|--bridge-adapter|--hostonly-adapter|--intnet-name|--ssh-port|--forward|--shared-folder|--shared-name|--log-file|--download|--iso-cache|--user|--password|--hostname|--locale|--country|--timezone|--provision)
+      --iso|--name|--preset|--ostype|--ram|--cpus|--disk|--vram|--graphics|--firmware|--usb|--tpm|--secure-boot|--machine-folder|--network|--bridge-adapter|--hostonly-adapter|--intnet-name|--ssh-port|--forward|--shared-folder|--shared-name|--log-file|--download|--iso-cache|--user|--password|--hostname|--locale|--country|--timezone|--provision|--delete-vm)
         (( $# >= 2 )) || die_usage "Option $arg needs a value"
         key="$arg"; val="$2"
         case "$key" in
@@ -767,6 +844,7 @@ parse_args() {
           --country) GUEST_COUNTRY="$val" ;;
           --timezone) GUEST_TIMEZONE="$val" ;;
           --provision) PROVISION_SCRIPTS="${PROVISION_SCRIPTS}${PROVISION_SCRIPTS:+,}$val" ;;
+          --delete-vm) DELETE_VM="$val" ;;
         esac
         shift 2
         ;;
@@ -952,7 +1030,11 @@ apply_defaults() {
   [[ -n "$VRAM_MB" ]] || VRAM_MB=128
   [[ -n "$GRAPHICS" ]] || GRAPHICS="vmsvga"
   [[ -n "$FIRMWARE" ]] || FIRMWARE="efi"
-  [[ -n "$USB_MODE" ]] || USB_MODE="ohci"
+  # VirtualBox 7 moved the EHCI/xHCI controllers into the open-source base
+  # package, so a modern build can default to USB 3.0 with no Extension Pack.
+  if [[ -z "$USB_MODE" ]]; then
+    if $VBOX_KNOWN && (( VBOX_MAJOR >= 7 )); then USB_MODE="xhci"; else USB_MODE="ohci"; fi
+  fi
   [[ -n "$NESTED_VIRT" ]] || NESTED_VIRT=false
   [[ -n "$TPM_TYPE" ]] || TPM_TYPE="none"
   [[ -n "$SECURE_BOOT" ]] || SECURE_BOOT="off"
@@ -1079,8 +1161,11 @@ validate_config() {
   if is_true "$ENABLE_3D" && $VBOX_KNOWN && (( VBOX_MAJOR == 7 )) && (( VBOX_MINOR == 1 )); then
     warn "VirtualBox 7.1.x has known 3D acceleration regressions; use --no-3d if the guest fails to boot"
   fi
-  if [[ "$USB_MODE" != "off" && "$USB_MODE" != "ohci" ]] && [[ -n "$VBOX_BIN" ]] && ! $HAS_EXTPACK; then
-    warn "USB 2.0/3.0 needs the VirtualBox Extension Pack; falling back to USB 1.1"
+  # EHCI and xHCI shipped with the Extension Pack only up to VirtualBox 6.1.
+  # From 7.0 on they are part of the base package, so never degrade there.
+  if [[ "$USB_MODE" == "ehci" || "$USB_MODE" == "xhci" ]] &&
+     [[ -n "$VBOX_BIN" ]] && $VBOX_KNOWN && (( VBOX_MAJOR < 7 )) && ! $HAS_EXTPACK; then
+    warn "USB 2.0/3.0 on VirtualBox $VBOX_MAJOR needs the Extension Pack; falling back to USB 1.1"
     USB_MODE="ohci"
   fi
 }
@@ -1743,6 +1828,16 @@ main() {
     if $DRY_RUN || $PRINT_CONFIG; then
       warn "VirtualBox (VBoxManage) not found — showing the plan only"
     fi
+  fi
+
+  # Commands that work on existing VMs need neither an ISO nor a preset.
+  if $LIST_VMS; then
+    list_vms
+    exit 0
+  fi
+  if [[ -n "$DELETE_VM" ]]; then
+    delete_vm "$DELETE_VM"
+    exit 0
   fi
 
   [[ -n "$PRESET" ]] && load_preset "$PRESET"

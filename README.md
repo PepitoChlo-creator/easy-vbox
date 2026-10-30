@@ -58,8 +58,8 @@ cd easy-vbox
 No git? Download the release tarball and use it directly:
 
 ```bash
-curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.1.0.tar.gz
-tar xzf easy-vbox-3.1.0.tar.gz && cd easy-vbox-3.1.0
+curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.2.0.tar.gz
+tar xzf easy-vbox-3.2.0.tar.gz && cd easy-vbox-3.2.0
 ./scripts/create-vm.sh --list-presets
 ```
 
@@ -79,7 +79,7 @@ Interactive mode (no arguments) asks for the ISO and the preset:
 
 ```text
 $ ./scripts/create-vm.sh --iso ubuntu-24.04.iso --preset fullstack --dry-run
-# EasyVbox v3.1.0 — dry run plan (nothing will be changed)
+# EasyVbox v3.2.0 — dry run plan (nothing will be changed)
 # preset: fullstack
 # vm: ubuntu-24.04 | iso: /home/you/ubuntu-24.04.iso | ram: 12288 MiB | cpus: 6
 VBoxManage createvm --name ubuntu-24.04 --ostype Ubuntu_64 --register --basefolder '/home/you/VirtualBox VMs'
@@ -250,6 +250,8 @@ limited; x86 ISO images will not boot.
 --download NAME | --list-isos | --iso-cache DIR
 --unattended --user NAME --password PASS --hostname NAME
 --provision FILE | --with-docker
+--list-vms              What VirtualBox has registered on this host
+--delete-vm NAME --yes  Unregister a VM and delete its disks
 --dry-run | --print-config | --list-presets | --list-isos | --no-verify
 ```
 
@@ -264,7 +266,7 @@ No VirtualBox needed — the suite drives a fake `VBoxManage` and checks the exa
 command sequence:
 
 ```bash
-./tests/run-tests.sh          # 69 tests
+./tests/run-tests.sh          # the full suite
 ./tests/run-tests.sh -v       # show every VBoxManage call
 ./scripts/validate-presets.sh # schema + docs coverage of all presets
 make test                     # both of the above + shellcheck, if installed

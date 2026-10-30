@@ -86,6 +86,7 @@ assert_not_contains() {
   [[ "$hay" != *"$needle"* ]] || fail "$what: did not expect '$needle'"
 }
 assert_file()      { [[ -f "$1" ]] || fail "expected file to exist: $1"; }
+assert_path()      { [[ -e "$1" ]] || fail "expected path to exist: $1"; }
 assert_no_file()   { [[ ! -e "$1" ]] || fail "expected path NOT to exist: $1"; }
 assert_log()       { grep -qF -- "$1" "$MOCK_LOG" || fail "mock log should contain: $1"; }
 assert_no_log()    { if grep -qF -- "$1" "$MOCK_LOG"; then fail "mock log should NOT contain: $1"; fi; }
@@ -157,7 +158,21 @@ test_version() {
   hide_vbox
   run_cli --version
   assert_rc 0
-  assert_contains "version" "easy-vbox 3.1.0" "$OUT"
+  local expected
+  expected="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$SCRIPT" | head -n1)"
+  assert_contains "version" "easy-vbox $expected" "$OUT"
+}
+
+# The installer reads its version from create-vm.sh; two copies drifted once
+# (install.sh claimed 3.0.0 while the project shipped 3.1.0).
+test_installer_reports_the_same_version() {
+  hide_vbox
+  local expected
+  expected="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$SCRIPT" | head -n1)"
+  OUT="$("$ROOT_DIR/scripts/install.sh" --help 2>&1 </dev/null)"
+  RC=$?
+  assert_rc 0
+  assert_contains "installer version" "installer v${expected}" "$OUT"
 }
 
 test_list_presets_without_vbox() {
@@ -374,9 +389,30 @@ test_secure_boot_fallback() {
   assert_contains "warning" "NVRAM" "$ERR"
 }
 
-test_usb_falls_back_without_extpack() {
+# VirtualBox 7 moved EHCI/xHCI into the base package: no Extension Pack, no
+# downgrade to USB 1.1 (OHCI). Regression guard for the 3.1.x behaviour.
+test_usb_xhci_on_vbox7_without_extpack() {
   use_mock
+  export MOCK_VERSION="7.0.20r163906"
   run_cli --iso "$ISO" --preset dev --name usb1
+  assert_rc 0
+  assert_log "--usb on"
+  assert_log "--usbxhci on"
+  assert_not_contains "warning" "Extension Pack" "$ERR"
+}
+
+test_usb_defaults_to_xhci_on_vbox7() {
+  use_mock
+  export MOCK_VERSION="7.2.0r170228"
+  run_cli --iso "$ISO" --name usbdefault
+  assert_rc 0
+  assert_log "--usbxhci on"
+}
+
+test_usb_falls_back_without_extpack_on_vbox6() {
+  use_mock
+  export MOCK_VERSION="6.1.50r161033"
+  run_cli --iso "$ISO" --preset dev --name usb6
   assert_rc 0
   assert_log "--usb on"
   assert_no_log "--usbxhci on"
@@ -790,6 +826,108 @@ test_unattended_dry_run_plan() {
   assert_contains "plan" "--password=***" "$OUT"
 }
 
+# ---------------------------------------------------------------------------
+# Managing VMs that already exist
+# ---------------------------------------------------------------------------
+test_list_vms_empty() {
+  use_mock
+  run_cli --list-vms
+  assert_rc 0
+  assert_contains "list" "No VirtualBox VMs" "$ERR"
+}
+
+test_list_vms_shows_registered_vms() {
+  use_mock
+  seed_vm alpha
+  seed_vm beta
+  mkdir -p "$MOCK_STATE/started" && : >"$MOCK_STATE/started/beta"
+  run_cli --list-vms
+  assert_rc 0
+  assert_contains "list" "alpha" "$OUT"
+  assert_contains "list" "beta" "$OUT"
+  assert_contains "list" "powered off" "$OUT"
+  assert_contains "list" "running" "$OUT"
+  assert_no_log "createvm"
+}
+
+test_list_vms_without_vbox() {
+  hide_vbox
+  run_cli --list-vms
+  assert_rc 1
+  assert_contains "error" "VirtualBox is not installed" "$ERR"
+}
+
+test_delete_vm_requires_confirmation() {
+  use_mock
+  seed_vm doomed
+  run_cli --delete-vm doomed
+  assert_rc 1
+  assert_contains "error" "--yes" "$ERR"
+  assert_no_log "unregistervm"
+}
+
+test_delete_vm_with_yes() {
+  use_mock
+  seed_vm doomed
+  run_cli --delete-vm doomed --yes
+  assert_rc 0
+  assert_log "unregistervm doomed --delete"
+  assert_contains "done" "deleted" "$ERR"
+}
+
+test_delete_vm_unknown_is_refused() {
+  use_mock
+  run_cli --delete-vm ghost --yes
+  assert_rc 1
+  assert_contains "error" "No VM named" "$ERR"
+  assert_no_log "unregistervm"
+}
+
+test_delete_vm_refuses_running_vm() {
+  use_mock
+  seed_vm busy
+  mkdir -p "$MOCK_STATE/started" && : >"$MOCK_STATE/started/busy"
+  run_cli --delete-vm busy --yes
+  assert_rc 1
+  assert_contains "error" "is running" "$ERR"
+  assert_no_log "unregistervm"
+}
+
+test_delete_vm_dry_run_deletes_nothing() {
+  use_mock
+  seed_vm keepsafe
+  run_cli --delete-vm keepsafe --dry-run
+  assert_rc 0
+  assert_contains "plan" "unregistervm keepsafe --delete" "$OUT"
+  assert_no_log "unregistervm"
+}
+
+test_delete_vm_needs_a_name() {
+  use_mock
+  run_cli --delete-vm
+  assert_rc 2
+  assert_contains "error" "needs a value" "$ERR"
+}
+
+# ---------------------------------------------------------------------------
+# Release packaging
+# ---------------------------------------------------------------------------
+# isos/ holds the catalog read by --download and --list-isos. The 3.1.0
+# tarball shipped without it and broke both commands for every downloader.
+test_release_payload_is_complete() {
+  hide_vbox
+  OUT="$("$ROOT_DIR/scripts/release-payload.sh" 2>&1 </dev/null)"
+  RC=$?
+  assert_rc 0
+  assert_contains "payload" "isos" "$OUT"
+  assert_contains "payload" "presets" "$OUT"
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    assert_path "$ROOT_DIR/$path"
+  done <<<"$OUT"
+}
+
 test_validate_catalog() {
   hide_vbox
   OUT="$("$CATALOG_VALIDATOR" 2>&1 </dev/null)"
@@ -813,6 +951,7 @@ test_validate_presets() {
 ALL_TESTS=(
   test_help_without_vbox
   test_version
+  test_installer_reports_the_same_version
   test_list_presets_without_vbox
   test_preset_list_is_readable
   test_unknown_option
@@ -836,7 +975,9 @@ ALL_TESTS=(
   test_windows11_requirements
   test_tpm_requires_vbox7
   test_secure_boot_fallback
-  test_usb_falls_back_without_extpack
+  test_usb_xhci_on_vbox7_without_extpack
+  test_usb_defaults_to_xhci_on_vbox7
+  test_usb_falls_back_without_extpack_on_vbox6
   test_usb_xhci_with_extpack
   test_ssh_port_collision
   test_extra_forward_from_preset
@@ -878,6 +1019,16 @@ ALL_TESTS=(
   test_provision_requires_unattended
   test_provision_rejects_windows_guest
   test_unattended_dry_run_plan
+  test_list_vms_empty
+  test_list_vms_shows_registered_vms
+  test_list_vms_without_vbox
+  test_delete_vm_requires_confirmation
+  test_delete_vm_with_yes
+  test_delete_vm_unknown_is_refused
+  test_delete_vm_refuses_running_vm
+  test_delete_vm_dry_run_deletes_nothing
+  test_delete_vm_needs_a_name
+  test_release_payload_is_complete
   test_validate_catalog
   test_validate_presets
 )

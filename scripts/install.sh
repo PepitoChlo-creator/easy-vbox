@@ -9,8 +9,12 @@
 # system decision that deserves your explicit attention.
 set -euo pipefail
 
-VERSION="3.0.0"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The version lives in create-vm.sh only: two copies drift apart (this file was
+# still claiming 3.0.0 when the project shipped 3.1.0).
+VERSION="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$ROOT_DIR/scripts/create-vm.sh" 2>/dev/null | head -n1)"
+[[ -n "$VERSION" ]] || VERSION="unknown"
 ASSUME_YES=false
 INSTALL_TOOLS="ask"
 
