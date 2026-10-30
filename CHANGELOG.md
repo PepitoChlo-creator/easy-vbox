@@ -3,6 +3,27 @@
 All notable changes to EasyVbox are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Repository hygiene: nothing in `scripts/` changes behaviour.
+
+### Added
+
+- `SECURITY.md` with the supported versions, the private reporting path, what is
+  in scope (injection, secret leakage, checksum bypass, unsafe deletes) and what
+  belongs upstream to Oracle.
+- GitHub issue forms for bug reports and feature requests. The bug form asks for
+  the version, the VirtualBox version, the command and the log tail, and reminds
+  reporters to redact passwords.
+- `PULL_REQUEST_TEMPLATE.md` with the project's non-negotiables: bash 3.2
+  compatibility, no new runtime dependencies, docs and changelog updated, and
+  `release-payload.sh` updated when a release changes shape.
+- `.editorconfig`, plus `.github/dependabot.yml` for the Actions used by CI.
+
+### Changed
+
+- `SECURITY.md` and `.editorconfig` now ship inside the release tarball.
+
 ## [3.2.0] — 2026-10-30
 
 Bug-fix release for the packaging path, plus the two commands that were missing

@@ -282,13 +282,15 @@ make test                     # both of the above + shellcheck, if installed
 - [`docs/ADVANCED.md`](docs/ADVANCED.md) — full flag reference and recipes
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — when VirtualBox says no
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed in each version
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability, and what is in scope
 
 ---
 
 ## Contributing
 
 The most valuable contribution is a **real** preset with real values, validated
-and documented. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+and documented. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the rules and
+[`SECURITY.md`](SECURITY.md) before reporting a vulnerability.
 
 ## License
 

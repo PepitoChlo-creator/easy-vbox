@@ -1,0 +1,12 @@
+# Issue forms are offered first; a plain issue stays possible for questions.
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/PepitoChlo-creator/easy-vbox/security/advisories/new
+    about: Report privately, never in a public issue. See SECURITY.md.
+  - name: VirtualBox itself is broken
+    url: https://forums.virtualbox.org/
+    about: Crashes, kernel modules and Extension Pack problems belong upstream.
+  - name: Read the docs first
+    url: https://github.com/PepitoChlo-creator/easy-vbox/blob/main/docs/TROUBLESHOOTING.md
+    about: Most boot, networking and Guest Additions problems are covered here.

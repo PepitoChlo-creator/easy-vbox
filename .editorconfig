@@ -1,0 +1,33 @@
+# EditorConfig — https://editorconfig.org
+# Keeps diffs small: these are the conventions the existing files already use.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.sh]
+indent_style = space
+indent_size = 2
+# ShellCheck directives are long enough already; keep lines readable.
+max_line_length = 100
+
+[tests/mock/VBoxManage]
+indent_style = space
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+# Trailing spaces are meaningful in Markdown (hard line breaks).
+trim_trailing_whitespace = false
+
+[*.{tsv,catalog.tsv}]
+indent_style = space
+indent_size = 2
+insert_final_newline = true
