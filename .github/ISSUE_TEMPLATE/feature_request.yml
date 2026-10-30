@@ -1,0 +1,58 @@
+name: Feature request
+description: A flag, a preset or a behaviour that would save you clicks
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most valuable contribution here is a **preset with real values** —
+        those need no code and ship fast. See
+        [CONTRIBUTING.md](https://github.com/PepitoChlo-creator/easy-vbox/blob/main/CONTRIBUTING.md).
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change is this?
+      options:
+        - New preset
+        - New CLI flag or command
+        - Change to an existing behaviour
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you doing by hand today because EasyVbox does not do it?
+      placeholder: >
+        I create three VMs a week and always forget to delete the old ones, so
+        `VBoxManage list vms` fills up with dead entries.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+      description: A command line sketch is worth a thousand words.
+      render: bash
+      placeholder: ./scripts/create-vm.sh --list-vms --stale 30d
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including "I just use raw VBoxManage" — that is useful signal.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Fit with the project
+      options:
+        - label: This can be done without adding a runtime dependency (jq, python, yq…).
+          required: false
+        - label: This keeps working on macOS with bash 3.2.
+          required: false

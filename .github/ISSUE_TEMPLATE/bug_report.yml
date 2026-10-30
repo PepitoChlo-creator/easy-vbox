@@ -1,0 +1,84 @@
+name: Bug report
+description: Something went wrong while creating, listing or deleting a VM
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A bug with a log is fixable; a bug without one
+        usually is not. **Never paste your guest password** — replace it with
+        `***` if it slipped in.
+
+  - type: input
+    id: version
+    attributes:
+      label: EasyVbox version
+      description: Output of `./scripts/create-vm.sh --version`
+      placeholder: easy-vbox 3.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: vbox
+    attributes:
+      label: VirtualBox version
+      description: Output of `VBoxManage --version`
+      placeholder: 7.2.0r170228
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host OS
+      placeholder: Ubuntu 24.04 / macOS 15.2 / Windows 11 (Git Bash)
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      description: The full line, with the password removed.
+      render: bash
+      placeholder: ./scripts/create-vm.sh --download ubuntu-24.04-server --preset server --unattended
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: A VM that boots and gets a DHCP lease.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: >
+        The error output and, most useful of all, the tail of the log file that
+        the script printed (usually `~/.easyvbox/logs/create-vm-*.log`).
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: dryrun
+    attributes:
+      label: Dry-run plan (optional but very useful)
+      description: Re-run the same command with `--dry-run` and paste the output.
+      render: bash
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed any passwords from this report.
+          required: true
+        - label: I ran `./scripts/create-vm.sh --version` and reported it above.
+          required: true
+        - label: I searched existing issues for the same problem.
+          required: false

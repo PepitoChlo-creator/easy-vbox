@@ -18,7 +18,9 @@ payload=(
   README.md
   CHANGELOG.md
   CONTRIBUTING.md
+  SECURITY.md
   LICENSE
+  .editorconfig
   Makefile
   docs
   presets
