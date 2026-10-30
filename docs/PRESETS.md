@@ -58,7 +58,7 @@ unknown keys are validation errors, so a typo never silently does nothing.
 
 The defaults used when a key is missing: `vram_mb` 128, `graphics_controller`
 `vmsvga`, `firmware` `efi`, `tpm` `none`, `secure_boot` `off`, `nested_virt`
-false, `usb` `ohci`, `headless` false, shared folder none, no extra forwards.
+false, `usb` `ohci` (or `xhci` on VirtualBox 7+, where USB 3.0 needs no Extension Pack), `headless` false, shared folder none, no extra forwards.
 
 Host ports must be free on your machine; EasyVbox only checks conflicts with
 other VirtualBox VMs, not with arbitrary host processes.

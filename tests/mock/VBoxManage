@@ -93,6 +93,16 @@ case "$cmd" in
           done <"$STATE/vms"
         fi
         ;;
+      runningvms)
+        if [[ -d "$STATE/started" ]]; then
+          for started in "$STATE/started"/*; do
+            [[ -e "$started" ]] || continue
+            started_name="$(basename "$started")"
+            is_registered "$started_name" || continue
+            printf '"%s" {%s}\n' "$started_name" "$(vm_uuid "$started_name")"
+          done
+        fi
+        ;;
       ostypes)
         if [[ -n "${MOCK_OSTYPES_LIST:-}" ]]; then
           IFS=',' read -r -a types <<<"$MOCK_OSTYPES_LIST"
@@ -364,7 +374,7 @@ case "$cmd" in
     if [[ "$*" == *"--delete"* ]]; then
       rm -rf "${FOLDER:?}/$name"
       rm -f "$(cfg_file "$name")" "$(ctrl_file "$name")" "$(attach_file "$name")"
-      rm -f "$STATE/forwarding/$name" "$STATE/shares/$name.share"
+      rm -f "$STATE/forwarding/$name" "$STATE/shares/$name.share" "$STATE/started/$name"
     fi
     unregister_vm "$name"
     ;;

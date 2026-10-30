@@ -13,7 +13,7 @@ jobs:
     name: publish ${{ github.ref_name }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -34,11 +34,35 @@ jobs:
         run: |
           name="easy-vbox-${GITHUB_REF_NAME#v}"
           mkdir -p "dist/$name"
-          cp -R README.md CHANGELOG.md CONTRIBUTING.md LICENSE Makefile docs presets scripts tests "dist/$name/"
+          # The payload lives in scripts/release-payload.sh so CI and the test
+          # suite agree on what a release contains (isos/ was missing once).
+          while IFS= read -r path; do
+            if [ ! -e "$path" ]; then
+              echo "::error::release payload is missing $path"
+              exit 1
+            fi
+            cp -R "$path" "dist/$name/"
+          done < <(./scripts/release-payload.sh)
           find "dist/$name" -name '*.sh' -o -name 'VBoxManage' -o -name 'run-tests.sh' | xargs chmod +x
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           ( cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
           cat "dist/$name.tar.gz.sha256"
+
+      - name: Smoke-test the tarball
+        run: |
+          # A release that cannot list presets or ISOs is not a release: run the
+          # unpacked artifact the way a user would, before publishing it.
+          tmp="$(mktemp -d)"
+          tar -C "$tmp" -xzf dist/easy-vbox-*.tar.gz
+          cd "$tmp"/easy-vbox-*
+          ./scripts/create-vm.sh --version
+          ./scripts/create-vm.sh --list-presets > /dev/null
+          ./scripts/create-vm.sh --list-isos > /dev/null
+          ./scripts/create-vm.sh --iso none --preset dev --dry-run > /dev/null
+          ./scripts/validate-presets.sh
+          ./scripts/validate-catalog.sh
+          ./tests/run-tests.sh > /dev/null
+          echo "tarball is usable"
 
       - name: Build the release notes from the CHANGELOG
         run: |

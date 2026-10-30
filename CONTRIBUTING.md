@@ -13,7 +13,7 @@ make test
 ```
 
 `make test` runs syntax checks, ShellCheck (if installed), preset validation
-and the 69-test suite. Everything must be green before opening a pull request.
+and the test suite. Everything must be green before opening a pull request.
 
 ## Adding a preset
 

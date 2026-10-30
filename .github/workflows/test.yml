@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.os }})
@@ -15,7 +22,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Bash syntax
         run: |
@@ -30,6 +37,9 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck --version
           shellcheck -S style scripts/*.sh tests/run-tests.sh tests/mock/VBoxManage
+
+      - name: Release payload is complete
+        run: ./scripts/release-payload.sh > /dev/null
 
       - name: Validate presets
         run: ./scripts/validate-presets.sh
