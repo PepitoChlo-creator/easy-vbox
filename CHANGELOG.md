@@ -3,12 +3,16 @@
 All notable changes to EasyVbox are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-Repository hygiene: nothing in `scripts/` changes behaviour.
+## [3.3.0] — 2026-11-24
 
 ### Added
 
+- `make install` target that runs the host installer/checker
+  (`./scripts/install.sh`).
+- `Updating EasyVbox` section in the README covering git and tarball upgrades.
+- ISO catalog validator now **warns** when a `direct_url` entry contains a
+  hardcoded version (e.g. the pinned `alpine-virt` image), so a stale pin is
+  surfaced in CI instead of failing silently at download time.
 - `SECURITY.md` with the supported versions, the private reporting path, what is
   in scope (injection, secret leakage, checksum bypass, unsafe deletes) and what
   belongs upstream to Oracle.
@@ -18,11 +22,14 @@ Repository hygiene: nothing in `scripts/` changes behaviour.
 - `PULL_REQUEST_TEMPLATE.md` with the project's non-negotiables: bash 3.2
   compatibility, no new runtime dependencies, docs and changelog updated, and
   `release-payload.sh` updated when a release changes shape.
-- `.editorconfig`, plus `.github/dependabot.yml` for the Actions used by CI.
 
 ### Changed
 
 - `SECURITY.md` and `.editorconfig` now ship inside the release tarball.
+
+### Maintenance
+
+- `.editorconfig`, plus `.github/dependabot.yml` for the Actions used by CI.
 
 ## [3.2.0] — 2026-10-30
 

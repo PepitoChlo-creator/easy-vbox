@@ -8,7 +8,7 @@
 # This script is intentionally a single file so it can be copied standalone.
 set -euo pipefail
 
-VERSION="3.2.0"
+VERSION="3.3.0"
 PROG="easy-vbox"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRESETS_DIR="${EASYVBOX_PRESETS_DIR:-$SCRIPT_DIR/../presets}"

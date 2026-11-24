@@ -14,7 +14,7 @@ body:
     attributes:
       label: EasyVbox version
       description: Output of `./scripts/create-vm.sh --version`
-      placeholder: easy-vbox 3.2.0
+      placeholder: easy-vbox 3.3.0
     validations:
       required: true
 
