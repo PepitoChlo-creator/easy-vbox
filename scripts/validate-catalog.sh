@@ -74,6 +74,13 @@ while IFS= read -r line; do
   elif [[ -n "$direct_url" ]]; then
     [[ "$direct_url" == https://* ]] || err "'$name': direct_url must be https"
     [[ "$direct_url" == *.iso ]] || warn "'$name': direct_url does not end in .iso"
+    # A hardcoded version in the URL (e.g. alpine-virt-3.22.1-...) is a pin that
+    # goes stale on the next upstream point release and, because this validator
+    # runs offline, CI will not catch it. Prefer a checksums_url + file_pattern
+    # entry, or review a pinned entry whenever that project releases.
+    if [[ "$direct_url" =~ [0-9]+\.[0-9]+ ]]; then
+      warn "'$name': direct_url contains a hardcoded version; it will go stale and CI cannot detect that (offline check). Prefer checksums_url + file_pattern, or review on every release."
+    fi
     [[ -z "$checksum_url" || "$checksum_url" == https://* ]] \
       || err "'$name': checksum_url must be https"
   else

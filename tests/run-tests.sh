@@ -935,6 +935,7 @@ test_validate_catalog() {
   assert_rc 0
   assert_contains "catalog" "0 error(s)" "$OUT"
   assert_contains "catalog" "debian-12-netinst" "$OUT"
+  assert_contains "catalog" "hardcoded version" "$OUT"
 }
 
 test_validate_presets() {
@@ -943,6 +944,61 @@ test_validate_presets() {
   RC=$?
   assert_rc 0
   assert_contains "validator" "0 error(s)" "$OUT"
+}
+
+# ---------------------------------------------------------------------------
+# Robustness: spaces in paths / pinned-version catalog warning
+# ---------------------------------------------------------------------------
+
+# An ISO path that contains spaces must survive all the way to the
+# `storageattach --medium` call, un-split.
+test_iso_path_with_spaces() {
+  use_mock
+  local spaced_dir="$TEST_TMP_CANON/spaced dir"
+  mkdir -p "$spaced_dir"
+  local iso="$spaced_dir/ubuntu 24.04.iso"
+  : >"$iso"
+  run_cli --iso "$iso" --name spvm --preset basic
+  assert_rc 0
+  assert_log "--medium $iso"
+}
+
+# The dry-run plan must quote a spaced ISO path so it can be copy/pasted.
+test_dry_run_quotes_spaced_iso() {
+  hide_vbox
+  local spaced_dir="$TEST_TMP_CANON/spaced dir"
+  mkdir -p "$spaced_dir"
+  local iso="$spaced_dir/ubuntu 24.04.iso"
+  : >"$iso"
+  run_cli --iso "$iso" --name spvm --preset basic --dry-run
+  assert_rc 0
+  assert_contains "dry-run" "spaced dir" "$OUT"
+  assert_contains "dry-run" "ubuntu 24.04.iso" "$OUT"
+}
+
+# A shared-folder host path with spaces must reach `sharedfolder add --hostpath`
+# intact.
+test_shared_folder_with_spaces() {
+  use_mock
+  local spaced_dir="$TEST_TMP_CANON/shared src"
+  mkdir -p "$spaced_dir"
+  run_cli --iso "$ISO" --name sfvm --shared-folder "code=$spaced_dir"
+  assert_rc 0
+  assert_log "--hostpath $spaced_dir --automount"
+}
+
+# A catalog `direct_url` that pins a version must produce a warning (not an
+# error) so the staleness is visible in CI.
+test_validate_catalog_warns_on_pinned_version() {
+  hide_vbox
+  local tmpcat
+  tmpcat="$(mktemp "${TEST_TMP:-/tmp}/cat.XXXXXX.tsv")"
+  printf 'pinned|alpine|0.1|||https://example.org/alpine-virt-3.22.1-x86_64.iso||pinned on purpose\n' >"$tmpcat"
+  OUT="$(EASYVBOX_ISO_CATALOG="$tmpcat" "$CATALOG_VALIDATOR" 2>&1 </dev/null)"
+  RC=$?
+  assert_rc 0
+  assert_contains "catalog" "hardcoded version" "$OUT"
+  rm -f "$tmpcat"
 }
 
 # ---------------------------------------------------------------------------
@@ -1031,6 +1087,10 @@ ALL_TESTS=(
   test_release_payload_is_complete
   test_validate_catalog
   test_validate_presets
+  test_iso_path_with_spaces
+  test_dry_run_quotes_spaced_iso
+  test_shared_folder_with_spaces
+  test_validate_catalog_warns_on_pinned_version
 )
 
 main() {

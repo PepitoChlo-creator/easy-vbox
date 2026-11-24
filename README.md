@@ -58,8 +58,8 @@ cd easy-vbox
 No git? Download the release tarball and use it directly:
 
 ```bash
-curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.2.0.tar.gz
-tar xzf easy-vbox-3.2.0.tar.gz && cd easy-vbox-3.2.0
+curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.3.0.tar.gz
+tar xzf easy-vbox-3.3.0.tar.gz && cd easy-vbox-3.3.0
 ./scripts/create-vm.sh --list-presets
 ```
 
@@ -73,13 +73,38 @@ Interactive mode (no arguments) asks for the ISO and the preset:
 
 ---
 
+## Updating EasyVbox
+
+EasyVbox is a handful of plain scripts — there is no package manager and no
+background updater. To move to a newer release:
+
+```bash
+# From a git checkout
+git pull
+make install            # re-run the host checker; makes the scripts executable
+./scripts/create-vm.sh --version
+
+# From a downloaded tarball
+curl -L -O https://github.com/PepitoChlo-creator/easy-vbox/releases/latest/download/easy-vbox-3.3.0.tar.gz
+tar xzf easy-vbox-3.3.0.tar.gz && cd easy-vbox-3.3.0
+```
+
+`make install` never installs VirtualBox itself — installing a hypervisor is a
+system decision that deserves your attention. What it does is make every script
+executable, confirm VirtualBox (and the Extension Pack) are present, and offer
+to install the optional `jq`/`zenity` helpers used by the preset validator.
+
+To see what changed in a release, read [`CHANGELOG.md`](CHANGELOG.md).
+
+---
+
 ## The 60-second tour
 
 `--dry-run` prints exactly what will run — nothing is created or modified:
 
 ```text
 $ ./scripts/create-vm.sh --iso ubuntu-24.04.iso --preset fullstack --dry-run
-# EasyVbox v3.2.0 — dry run plan (nothing will be changed)
+# EasyVbox v3.3.0 — dry run plan (nothing will be changed)
 # preset: fullstack
 # vm: ubuntu-24.04 | iso: /home/you/ubuntu-24.04.iso | ram: 12288 MiB | cpus: 6
 VBoxManage createvm --name ubuntu-24.04 --ostype Ubuntu_64 --register --basefolder '/home/you/VirtualBox VMs'

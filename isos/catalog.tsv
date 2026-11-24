@@ -31,4 +31,4 @@ arch-latest|arch|1.2|https://archlinux.org/iso/latest/sha256sums.txt|archlinux-x
 kali-latest|kali|5.0|https://cdimage.kali.org/current/SHA256SUMS|*-installer-amd64.iso|||Kali Linux installer, current release
 rocky-9-minimal|rhel|2.0|https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/CHECKSUM|*x86_64-minimal.iso|||Rocky Linux 9 minimal
 opensuse-tumbleweed-net|suse|0.5|||https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-NET-x86_64-Current.iso|https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-NET-x86_64-Current.iso.sha256|openSUSE Tumbleweed network installer
-alpine-virt|alpine|0.1|||https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-virt-3.22.1-x86_64.iso||Alpine virtual image, tiny and fast (pinned version: update from dl-cdn.alpinelinux.org)
+alpine-virt|alpine|0.1|||https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-virt-3.22.1-x86_64.iso||Alpine virtual image, tiny and fast. PINNED: Alpine publishes no stable "latest" ISO with a checksum list, so this version is hardcoded and must be reviewed on every Alpine point release (the catalog validator warns about it)

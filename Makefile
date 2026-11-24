@@ -3,7 +3,7 @@ SCRIPTS := scripts/create-vm.sh scripts/install.sh scripts/install-guest-additio
            scripts/validate-presets.sh scripts/validate-catalog.sh scripts/release-payload.sh
 TEST_FILES := tests/run-tests.sh tests/mock/VBoxManage
 
-.PHONY: help test lint syntax presets catalog payload dry-run list vms
+.PHONY: help test lint syntax presets catalog payload dry-run list vms install
 
 help: ## Show this help
 	@printf 'EasyVbox — make targets\n\n'
@@ -43,3 +43,6 @@ list: ## List the available presets
 
 vms: ## List the VMs registered with VirtualBox
 	./scripts/create-vm.sh --list-vms
+
+install: ## Run the host installer/checker (makes scripts executable, checks VirtualBox)
+	./scripts/install.sh
