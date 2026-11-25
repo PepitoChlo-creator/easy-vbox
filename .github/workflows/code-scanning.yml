@@ -1,0 +1,39 @@
+name: Code scanning
+
+# ShellCheck results, uploaded to GitHub code scanning as SARIF.
+# EasyVbox is pure bash, which CodeQL does not analyse, so we bridge ShellCheck
+# (already used by CI) into code scanning instead of a no-op CodeQL run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck (upload SARIF)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # required to publish code scanning results
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck and emit SARIF
+        run: |
+          shellcheck --format sarif \
+            scripts/*.sh tests/run-tests.sh tests/mock/VBoxManage \
+            > shellcheck.sarif || true
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: shellcheck.sarif
+          category: shellcheck
